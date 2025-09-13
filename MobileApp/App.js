@@ -12,10 +12,12 @@ import AlertSent from './src/screens/AlertSent';
 import Onboarding from './src/screens/Onboarding';
 import Login from './src/screens/Login';
 import Signup from './src/screens/Signup';
+import ForgotPassword from './src/screens/ForgotPassword';
 import Home from './src/screens/Home';
 import Settings from './src/screens/Settings';
 import EditProfile from './src/screens/EditProfile';
 import EmergencyContact from './src/screens/EmergencyContact';
+import DeleteAccount from './src/screens/DeleteAccount';
 import JournalEntry from './src/screens/JournalEntry';
 import Chatbot from './src/screens/Chatbot';
 import JournalHistory from './src/screens/JournalHistory';
@@ -73,6 +75,7 @@ export default function App() {
         <Stack.Screen name="Onboarding" component={Onboarding} />
         <Stack.Screen name="Login" component={Login} />
         <Stack.Screen name="Signup" component={Signup} />
+        <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
 
         {/* Main area: bottom tabs */}
         <Stack.Screen name="Home" component={HomeTabs} />
@@ -91,6 +94,7 @@ export default function App() {
         <Stack.Screen name="Settings" component={Settings} />
         <Stack.Screen name="EditProfile" component={EditProfile} />
         <Stack.Screen name="EmergencyContact" component={EmergencyContact} />
+        <Stack.Screen name="DeleteAccount" component={DeleteAccount} />
         <Stack.Screen name="MoodTracker" component={MoodTracker} />
         <Stack.Screen name="MoodHistory" component={MoodHistory} />
         <Stack.Screen name="JournalHistory" component={JournalHistory} />

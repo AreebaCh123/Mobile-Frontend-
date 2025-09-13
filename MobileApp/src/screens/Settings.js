@@ -8,6 +8,7 @@ import {
   Switch,
   Image,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { colors, spacing, type, radii } from '../themes/tokens';
@@ -107,11 +108,13 @@ export default function Settings({ navigation }) {
 
         {/* Emergency Contact */}
         <Text style={styles.sectionTitle}>Emergency Contact</Text>
-        <Image
-          source={require('../../assets/s3.png')}
-          style={styles.emergencyImage}
-          resizeMode="cover"
-        />
+        <View style={styles.emergencyImageContainer}>
+          <Image
+            source={require('../../assets/s3.png')}
+            style={styles.emergencyImage}
+            resizeMode="cover"
+          />
+        </View>
 
         {/* 👉 Navigate to Emergency Contact */}
         <TouchableOpacity
@@ -172,10 +175,31 @@ export default function Settings({ navigation }) {
         </View>
 
         {/* Log Out & Delete */}
-        <TouchableOpacity style={styles.primaryBtn}>
+        <TouchableOpacity 
+          style={styles.primaryBtn}
+          onPress={() => {
+            Alert.alert(
+              'Log Out',
+              'Are you sure you want to log out?',
+              [
+                {
+                  text: 'Cancel',
+                  style: 'cancel',
+                },
+                {
+                  text: 'Log Out',
+                  style: 'destructive',
+                  onPress: () => {
+                    navigation.navigate('Onboarding');
+                  },
+                },
+              ]
+            );
+          }}
+        >
           <Text style={styles.primaryText}>Log Out</Text>
         </TouchableOpacity>
-        <TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.navigate('DeleteAccount')}>
           <Text style={styles.deleteText}>Delete Account</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -220,11 +244,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   primaryText: { color: colors.white, fontWeight: '700' },
+  emergencyImageContainer: {
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
   emergencyImage: {
-    marginHorizontal: spacing.xl,
     borderRadius: radii.md,
     height: ms(140),
-    marginBottom: spacing.md,
+    width: ms(200),
   },
   toggleRow: {
     flexDirection: 'row',

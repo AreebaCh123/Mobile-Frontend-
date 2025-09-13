@@ -65,12 +65,16 @@ export default function Home({ navigation }) {
         contentContainerStyle={{ paddingBottom: spacing['3xl'] + ms(70) }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Greeting + quote */}
+        {/* Professional Header */}
         <View style={styles.greetingWrap}>
           <Text style={styles.greetingText}>
             {greeting}, {userName}
           </Text>
-          <Text style={styles.quote}>"{quote}"</Text>
+          <Text style={styles.subtitle}>Welcome to your wellness dashboard</Text>
+          <View style={styles.quoteContainer}>
+            <Text style={styles.quoteIcon}>💭</Text>
+            <Text style={styles.quote}>"{quote}"</Text>
+          </View>
         </View>
 
         {/* Journal Reminder card */}
@@ -235,10 +239,45 @@ const styles = StyleSheet.create({
 
   greetingWrap: {
     paddingHorizontal: spacing.xl,
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
+    backgroundColor: colors.surface,
+    marginHorizontal: spacing.xl,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  greetingText: { ...type.h2, color: colors.text, marginBottom: spacing.xs },
-  quote: { ...type.caption, color: colors.mutedText },
+  greetingText: { 
+    ...type.h1, 
+    color: colors.text, 
+    marginBottom: spacing.xs,
+    fontWeight: '700',
+  },
+  subtitle: {
+    ...type.body,
+    color: colors.mutedText,
+    marginBottom: spacing.md,
+    fontWeight: '500',
+  },
+  quoteContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  quoteIcon: {
+    fontSize: 16,
+    marginRight: spacing.sm,
+  },
+  quote: { 
+    ...type.caption, 
+    color: colors.text,
+    flex: 1,
+    fontStyle: 'italic',
+  },
 
   cardRow: {
     flexDirection: 'row',

@@ -1,65 +1,107 @@
-// src/screens/Onboarding.js
 import React from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
-import { colors, spacing, radii, type } from '../themes/tokens';
-import { ms } from '../themes/scale';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  SafeAreaView,
+  StatusBar,
+  Image,
+} from 'react-native';
 
-export default function Onboarding({ navigation }) {
+const OnboardingScreen = ({ navigation }) => {
+  const handleGetStarted = () => {
+    navigation.navigate('Login');
+  };
+
   return (
-    <View style={styles.container}>
-      <View style={styles.centerWrap}>
-        <Image
-          source={require('../../assets/logo.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      
+      <View style={styles.content}>
+        {/* Logo */}
+        <View style={styles.logoContainer}>
+          <Image
+            source={require('../../assets/logo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+        </View>
+
+        {/* App Name */}
+        <Text style={styles.appName}>MindMate</Text>
+        
+        {/* Tagline */}
+        <Text style={styles.tagline}>Take a step towards self care</Text>
+
+        {/* Get Started Button */}
+        <TouchableOpacity
+          style={styles.getStartedButton}
+          onPress={handleGetStarted}
+        >
+          <Text style={styles.getStartedButtonText}>Get Started</Text>
+        </TouchableOpacity>
       </View>
-
-      <TouchableOpacity
-        style={styles.cta}
-        activeOpacity={0.9}
-        onPress={() => navigation.navigate('Login')}
-
-      >
-        <Text style={styles.ctaText}>Get Started</Text>
-      </TouchableOpacity>
-    </View>
+    </SafeAreaView>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
-    paddingHorizontal: spacing.xl,
-    paddingBottom: spacing['3xl'],
-    paddingTop: spacing['3xl'],
-    justifyContent: 'space-between',
+    backgroundColor: '#F8F9FA',
   },
-  centerWrap: {
-    flex: 1,                        // take all available vertical space
-    alignItems: 'center',           // center horizontally
-    justifyContent: 'center',       // center vertically
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    backgroundColor: '#FFFFFF',
+  },
+  logoContainer: {
+    marginBottom: 40,
   },
   logo: {
-    width: ms(180),
-    height: ms(180),
-    marginBottom: spacing.md,
+    width: 200,
+    height: 200,
   },
   appName: {
-    ...type.h2,
-    color: colors.text,
+    fontSize: 42,
+    fontWeight: '800',
+    color: '#2D3748',
+    marginBottom: 4,
+    textAlign: 'center',
+    letterSpacing: 1,
   },
-  cta: {
-    height: ms(54),
-    borderRadius: radii.pill,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+  tagline: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: '#718096',
+    marginBottom: 60,
+    textAlign: 'center',
+    lineHeight: 24,
   },
-  ctaText: {
-    ...type.h2,
-    color: colors.white,
+  getStartedButton: {
+    backgroundColor: '#BF8EEB',
+    paddingHorizontal: 50,
+    paddingVertical: 18,
+    borderRadius: 16,
+    shadowColor: '#BF8EEB',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  getStartedButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
     fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: 0.5,
   },
 });
+
+export default OnboardingScreen;
