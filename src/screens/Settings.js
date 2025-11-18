@@ -23,10 +23,11 @@ const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://127.0.0.1:80
 
 export default function Settings({ navigation }) {
   // toggle states
-  const [taskReminders, setTaskReminders] = useState(false);
-  const [medicationReminders, setMedicationReminders] = useState(false);
-  const [journalReminders, setJournalReminders] = useState(false);
-  const [chatbotReplies, setChatbotReplies] = useState(false);
+  const [taskReminders, setTaskReminders] = useState(true);
+  const [medicationReminders, setMedicationReminders] = useState(true);
+  const [journalReminders, setJournalReminders] = useState(true);
+  const [moodReminders, setMoodReminders] = useState(true);
+  const [loadingPreferences, setLoadingPreferences] = useState(false);
   const { isDark, setIsDark } = useContext(ThemeContext);
   const [profile, setProfile] = useState(null);
   const [storedUser, setStoredUser] = useState(null);
@@ -82,10 +83,133 @@ export default function Settings({ navigation }) {
     }
   }, []);
 
+  const loadNotificationPreferences = useCallback(async () => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      if (!token) return;
+
+      const response = await fetch(`${API_BASE_URL}/api/notifications/preferences/`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setTaskReminders(data.task_reminders ?? true);
+        setMedicationReminders(data.medication_reminders ?? true);
+        setJournalReminders(data.journal_reminders ?? true);
+        setMoodReminders(data.mood_reminders ?? true);
+      }
+    } catch (error) {
+      console.log('Error loading notification preferences:', error);
+    }
+  }, []);
+
+  const saveNotificationPreferencesWithValue = useCallback(async (preferencesToSave) => {
+    try {
+      setLoadingPreferences(true);
+      const token = await AsyncStorage.getItem('authToken');
+      if (!token) return;
+
+      const response = await fetch(`${API_BASE_URL}/api/notifications/preferences/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(preferencesToSave),
+      });
+
+      if (response.ok) {
+        // Update local state to match what was saved
+        setTaskReminders(preferencesToSave.task_reminders ?? true);
+        setMedicationReminders(preferencesToSave.medication_reminders ?? true);
+        setJournalReminders(preferencesToSave.journal_reminders ?? true);
+        setMoodReminders(preferencesToSave.mood_reminders ?? true);
+        
+        // Cancel all scheduled notifications and reschedule based on new preferences
+        const { cancelAllNotifications, scheduleAllNotifications } = require('../services/notificationService');
+        await cancelAllNotifications();
+        
+        // Reschedule notifications with new preferences
+        try {
+          const today = new Date().toISOString().split('T')[0];
+          
+          // Get tasks
+          const tasksRes = await fetch(`${API_BASE_URL}/api/journals/tasks/?filter=today`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const tasksData = tasksRes.ok ? await tasksRes.json() : { tasks: [] };
+          const todayTasks = (tasksData.tasks || []).filter(t => {
+            const taskDate = t.due_date ? t.due_date.split('T')[0] : null;
+            return taskDate === today && !t.completed;
+          });
+
+          // Get medications
+          const medRes = await fetch(`${API_BASE_URL}/api/journals/medications/`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const medData = medRes.ok ? await medRes.json() : { medications: [] };
+
+          // Check journal
+          const journalRes = await fetch(`${API_BASE_URL}/api/journals/entries/`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const journalData = journalRes.ok ? await journalRes.json() : { entries: [] };
+          const hasJournalToday = (journalData.entries || []).some(entry => 
+            entry.created_at?.split('T')[0] === today
+          );
+
+          // Check mood
+          const moodRes = await fetch(`${API_BASE_URL}/api/journals/mood-logs/`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const moodData = moodRes.ok ? await moodRes.json() : { mood_logs: [] };
+          const hasMoodToday = (moodData.mood_logs || []).some(log => 
+            log.date === today
+          );
+
+          // Get milestones
+          const milestoneRes = await fetch(`${API_BASE_URL}/api/journals/milestones/`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const milestoneData = milestoneRes.ok ? await milestoneRes.json() : null;
+
+          // Reschedule with new preferences
+          await scheduleAllNotifications(
+            todayTasks,
+            medData.medications || [],
+            hasJournalToday,
+            hasMoodToday,
+            preferencesToSave,
+            milestoneData?.milestones || null
+          );
+        } catch (rescheduleError) {
+          console.log('Error rescheduling notifications:', rescheduleError);
+        }
+      } else {
+        Alert.alert('Error', 'Failed to save notification preferences');
+        // Revert state on error
+        loadNotificationPreferences();
+      }
+    } catch (error) {
+      console.log('Error saving notification preferences:', error);
+      Alert.alert('Error', 'Failed to save notification preferences');
+      // Revert state on error
+      loadNotificationPreferences();
+    } finally {
+      setLoadingPreferences(false);
+    }
+  }, [loadNotificationPreferences]);
+
   useFocusEffect(
     useCallback(() => {
       loadProfile();
-    }, [loadProfile])
+      loadNotificationPreferences();
+    }, [loadProfile, loadNotificationPreferences])
   );
 
   const personalInfo = useMemo(() => {
@@ -220,35 +344,72 @@ export default function Settings({ navigation }) {
         {/* Notification Preferences */}
         <Text style={[styles.sectionTitle, { color: textColor }]}>Notification Preferences</Text>
         <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>Task Reminders</Text>
+          <Text style={[styles.toggleLabel, { color: textColor }]}>Task Reminders</Text>
           <Switch
             value={taskReminders}
-            onValueChange={setTaskReminders}
-            trackColor={{ true: colors.primary }}
+            onValueChange={async (value) => {
+              setTaskReminders(value);
+              // Save immediately with the new value
+              await saveNotificationPreferencesWithValue({
+                task_reminders: value,
+                medication_reminders: medicationReminders,
+                journal_reminders: journalReminders,
+                mood_reminders: moodReminders,
+              });
+            }}
+            trackColor={{ true: colors.primary, false: isDark ? '#333' : '#ccc' }}
+            disabled={loadingPreferences}
           />
         </View>
         <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>Medication Reminders</Text>
+          <Text style={[styles.toggleLabel, { color: textColor }]}>Medication Reminders</Text>
           <Switch
             value={medicationReminders}
-            onValueChange={setMedicationReminders}
-            trackColor={{ true: colors.primary }}
+            onValueChange={async (value) => {
+              setMedicationReminders(value);
+              await saveNotificationPreferencesWithValue({
+                task_reminders: taskReminders,
+                medication_reminders: value,
+                journal_reminders: journalReminders,
+                mood_reminders: moodReminders,
+              });
+            }}
+            trackColor={{ true: colors.primary, false: isDark ? '#333' : '#ccc' }}
+            disabled={loadingPreferences}
           />
         </View>
         <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>Journal Reminders</Text>
+          <Text style={[styles.toggleLabel, { color: textColor }]}>Journal Reminders</Text>
           <Switch
             value={journalReminders}
-            onValueChange={setJournalReminders}
-            trackColor={{ true: colors.primary }}
+            onValueChange={async (value) => {
+              setJournalReminders(value);
+              await saveNotificationPreferencesWithValue({
+                task_reminders: taskReminders,
+                medication_reminders: medicationReminders,
+                journal_reminders: value,
+                mood_reminders: moodReminders,
+              });
+            }}
+            trackColor={{ true: colors.primary, false: isDark ? '#333' : '#ccc' }}
+            disabled={loadingPreferences}
           />
         </View>
         <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>Chatbot Replies</Text>
+          <Text style={[styles.toggleLabel, { color: textColor }]}>Mood Reminders</Text>
           <Switch
-            value={chatbotReplies}
-            onValueChange={setChatbotReplies}
-            trackColor={{ true: colors.primary }}
+            value={moodReminders}
+            onValueChange={async (value) => {
+              setMoodReminders(value);
+              await saveNotificationPreferencesWithValue({
+                task_reminders: taskReminders,
+                medication_reminders: medicationReminders,
+                journal_reminders: journalReminders,
+                mood_reminders: value,
+              });
+            }}
+            trackColor={{ true: colors.primary, false: isDark ? '#333' : '#ccc' }}
+            disabled={loadingPreferences}
           />
         </View>
 

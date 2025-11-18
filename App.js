@@ -1,9 +1,38 @@
 // App.js
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Feather } from '@expo/vector-icons';
+import * as Notifications from 'expo-notifications';
+import { saveNotificationToStorage } from './src/services/notificationService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
+
+const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://127.0.0.1:8000';
+
+// Helper to get notification preferences
+async function getNotificationPreferences() {
+  try {
+    const token = await AsyncStorage.getItem('authToken');
+    if (!token) return null;
+
+    const response = await fetch(`${API_BASE_URL}/api/notifications/preferences/`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.ok) {
+      return await response.json();
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
 
 // Screens
 import ProfileSetup from './src/screens/ProfileSetup';
@@ -80,6 +109,82 @@ function HomeTabs() {
 }
 
 export default function App() {
+  const notificationListener = useRef();
+  const responseListener = useRef();
+
+  useEffect(() => {
+    // Listen for notifications received while app is foregrounded
+    notificationListener.current = Notifications.addNotificationReceivedListener(async (notification) => {
+      const notificationType = notification.request.content.data?.type || 'general';
+      
+      // Check preferences before saving
+      const preferences = await getNotificationPreferences();
+      if (preferences) {
+        const typeEnabled = {
+          'task': preferences.task_reminders,
+          'medication': preferences.medication_reminders,
+          'journal': preferences.journal_reminders,
+          'mood': preferences.mood_reminders,
+          'milestone': true,
+          'general': true,
+        };
+        
+        if (typeEnabled[notificationType] === false) {
+          return; // Don't save if disabled
+        }
+      }
+      
+      saveNotificationToStorage({
+        id: `received_${Date.now()}_${Math.random()}`,
+        type: notificationType,
+        title: notification.request.content.title,
+        message: notification.request.content.body,
+        time: new Date().toISOString(),
+        read: false,
+      });
+    });
+
+    // Listen for user tapping on notifications
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(async (response) => {
+      const notificationType = response.notification.request.content.data?.type || 'general';
+      
+      // Check preferences before saving
+      const preferences = await getNotificationPreferences();
+      if (preferences) {
+        const typeEnabled = {
+          'task': preferences.task_reminders,
+          'medication': preferences.medication_reminders,
+          'journal': preferences.journal_reminders,
+          'mood': preferences.mood_reminders,
+          'milestone': true,
+          'general': true,
+        };
+        
+        if (typeEnabled[notificationType] === false) {
+          return; // Don't save if disabled
+        }
+      }
+      
+      saveNotificationToStorage({
+        id: `tapped_${Date.now()}_${Math.random()}`,
+        type: notificationType,
+        title: response.notification.request.content.title,
+        message: response.notification.request.content.body,
+        time: new Date().toISOString(),
+        read: false,
+      });
+    });
+
+    return () => {
+      if (notificationListener.current) {
+        Notifications.removeNotificationSubscription(notificationListener.current);
+      }
+      if (responseListener.current) {
+        Notifications.removeNotificationSubscription(responseListener.current);
+      }
+    };
+  }, []);
+
   return (
     <ThemeProvider>
       <NavigationContainer>

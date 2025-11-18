@@ -28,7 +28,19 @@ export default {
     web: {
       favicon: './assets/favicon.png',
     },
-    plugins: ['expo-asset', 'expo-font', "expo-web-browser"],
+    plugins: [
+      'expo-asset', 
+      'expo-font', 
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#ffffff",
+          "sounds": [],
+        }
+      ]
+    ],
     extra: {
       apiUrl: process.env.EXPO_PUBLIC_API_URL,
       google: {

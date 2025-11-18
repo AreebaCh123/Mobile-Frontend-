@@ -15,6 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { useFocusEffect } from '@react-navigation/native';
 import { ThemeContext } from '../context/ThemeContext';
+import { scheduleAllNotifications } from '../services/notificationService';
 
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://127.0.0.1:8000';
 
@@ -89,12 +90,13 @@ export default function Home({ navigation, route }) {
           }
 
           // Load medication summary for today
+          let medData = null;
           try {
             const medRes = await fetch(`${API_BASE_URL}/api/journals/medications/`, {
               method: 'GET',
               headers: { Authorization: `Bearer ${token}` },
             });
-            const medData = await medRes.json();
+            medData = await medRes.json();
             if (medRes.ok && isActive) {
               setHasPendingMeds(Boolean(medData?.has_pending));
             } else {
@@ -120,12 +122,13 @@ export default function Home({ navigation, route }) {
           }
 
           // Load tasks due today
+          let tasksData = null;
           try {
             const tasksRes = await fetch(`${API_BASE_URL}/api/journals/tasks/?filter=today`, {
               method: 'GET',
               headers: { Authorization: `Bearer ${token}` },
             });
-            const tasksData = await tasksRes.json();
+            tasksData = await tasksRes.json();
             if (tasksRes.ok && isActive) {
               const tasks = tasksData.tasks || [];
               setHasDueTasks(tasks.length > 0);
@@ -149,6 +152,74 @@ export default function Home({ navigation, route }) {
             }
           } catch (gratitudeErr) {
             console.log('Home gratitude fetch error', gratitudeErr);
+          }
+
+          // Schedule notifications
+          try {
+            // Get notification preferences
+            const prefRes = await fetch(`${API_BASE_URL}/api/notifications/preferences/`, {
+              method: 'GET',
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const preferences = prefRes.ok ? await prefRes.json() : {
+              task_reminders: true,
+              medication_reminders: true,
+              journal_reminders: true,
+              mood_reminders: true,
+            };
+
+            // Get tasks for today
+            const tasksForNotif = tasksData?.tasks || [];
+            const todayTasks = tasksForNotif.filter(t => {
+              const taskDate = t.due_date ? t.due_date.split('T')[0] : null;
+              const today = new Date().toISOString().split('T')[0];
+              return taskDate === today && !t.completed;
+            });
+
+            // Get medications
+            const medicationsForNotif = medData?.medications || [];
+
+            // Check if journal written today
+            const journalRes = await fetch(`${API_BASE_URL}/api/journals/entries/`, {
+              method: 'GET',
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const journalData = journalRes.ok ? await journalRes.json() : { entries: [] };
+            const today = new Date().toISOString().split('T')[0];
+            const hasJournalToday = (journalData.entries || []).some(entry => 
+              entry.created_at?.split('T')[0] === today
+            );
+
+            // Check if mood logged today
+            const moodRes = await fetch(`${API_BASE_URL}/api/journals/mood-logs/`, {
+              method: 'GET',
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const moodData = moodRes.ok ? await moodRes.json() : { mood_logs: [] };
+            const hasMoodToday = (moodData.mood_logs || []).some(log => 
+              log.date === today
+            );
+
+            // Get milestone data for notifications
+            const milestoneRes = await fetch(`${API_BASE_URL}/api/journals/milestones/`, {
+              method: 'GET',
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const milestoneData = milestoneRes.ok ? await milestoneRes.json() : null;
+
+            // Schedule all notifications
+            if (isActive) {
+              scheduleAllNotifications(
+                todayTasks,
+                medicationsForNotif,
+                hasJournalToday,
+                hasMoodToday,
+                preferences,
+                milestoneData?.milestones || null
+              );
+            }
+          } catch (notifErr) {
+            console.log('Home notification scheduling error', notifErr);
           }
 
           // Load daily tip
