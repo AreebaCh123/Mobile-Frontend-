@@ -199,6 +199,16 @@ export default function Chatbot({ navigation }) {
     setIsTyping(true);
     scrollRef.current?.scrollToEnd({ animated: true });
 
+    // Create bot message placeholder for streaming
+    const botMessageId = (Date.now() + 1).toString();
+    const botMessage = {
+      id: botMessageId,
+      author: "bot",
+      name: "Nia",
+      text: "",
+    };
+    setMessages((prev) => [...prev, botMessage]);
+
     try {
       const token = await AsyncStorage.getItem("authToken");
       if (!token) {
@@ -218,14 +228,64 @@ export default function Chatbot({ navigation }) {
       });
 
       if (response.ok) {
-        const data = await response.json();
-        const botMessage = {
-          id: (Date.now() + 1).toString(),
-          author: "bot",
-          name: "Nia",
-          text: data.response || "I'm here to listen. Can you tell me more?",
-        };
-        setMessages((prev) => [...prev, botMessage]);
+        // Handle streaming response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullText = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.type === 'token') {
+                  fullText += data.content;
+                  // Update bot message with streaming tokens
+                  setMessages((prev) =>
+                    prev.map((msg) =>
+                      msg.id === botMessageId
+                        ? { ...msg, text: fullText }
+                        : msg
+                    )
+                  );
+                  // Auto-scroll as message updates
+                  scrollRef.current?.scrollToEnd({ animated: false });
+                }
+              } catch (e) {
+                console.error('Error parsing streaming data:', e);
+              }
+            }
+          }
+        }
+
+        // Ensure final message is displayed
+        if (fullText) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMessageId
+                ? { ...msg, text: fullText }
+                : msg
+            )
+          );
+        } else {
+          // Fallback if no streaming data received
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMessageId
+                ? { ...msg, text: "I'm here to listen. Can you tell me more?" }
+                : msg
+            )
+          );
+        }
+        
         scrollRef.current?.scrollToEnd({ animated: true });
       } else {
         const errorData = await response.json();
@@ -233,14 +293,17 @@ export default function Chatbot({ navigation }) {
       }
     } catch (error) {
       console.error("Error sending message:", error);
-      // Show error message in chat
-      const errorMessage = {
-        id: (Date.now() + 1).toString(),
-        author: "bot",
-        name: "Nia",
-        text: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment.",
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      // Update bot message with error
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMessageId
+            ? {
+                ...msg,
+                text: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment.",
+              }
+            : msg
+        )
+      );
       Alert.alert(
         "Connection Error",
         "Could not send your message. Please check your internet connection and try again."
