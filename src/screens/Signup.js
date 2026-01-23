@@ -135,24 +135,24 @@ const SignUpScreen = ({ navigation }) => {
       Alert.alert('Error', 'Please enter your name');
       return;
     }
-    
+
     if (!formData.email.trim()) {
       Alert.alert('Error', 'Please enter your email');
       return;
     }
-    
+
     if (!formData.password.trim()) {
       Alert.alert('Error', 'Please enter a password');
       return;
     }
-    
+
     if (formData.password !== formData.confirmPassword) {
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
 
     setIsLoading(true);
-    
+
     // Simulate API call
     try {
       const payload = {
@@ -216,28 +216,13 @@ const SignUpScreen = ({ navigation }) => {
     navigation.navigate('Login');
   };
 
-  const FormInput = ({ label, value, onChangeText, placeholder, keyboardType = 'default', multiline = false, secureTextEntry = false }) => (
-    <View style={styles.inputContainer}>
-      <TextInput
-        style={[styles.textInput, multiline && styles.multilineInput]}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#999999"
-        keyboardType={keyboardType}
-        autoCapitalize={multiline ? 'sentences' : 'words'}
-        autoCorrect={false}
-        multiline={multiline}
-        numberOfLines={multiline ? 4 : 1}
-        secureTextEntry={secureTextEntry}
-      />
-    </View>
-  );
+  const [genderModalVisible, setGenderModalVisible] = useState(false);
+  const genderOptions = ['Male', 'Female', 'Other'];
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bgColor }]}>
       <StatusBar barStyle={isDark ? "light-content" : "dark-content"} backgroundColor={headerBg} />
-      
+
       {/* Header */}
       <View style={[styles.header, { backgroundColor: headerBg }]}>
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
@@ -266,7 +251,6 @@ const SignUpScreen = ({ navigation }) => {
             value={formData.password}
             onChangeText={(value) => handleInputChange('password', value)}
             placeholder="Password"
-            keyboardType="default"
             secureTextEntry={true}
           />
 
@@ -274,15 +258,41 @@ const SignUpScreen = ({ navigation }) => {
             value={formData.confirmPassword}
             onChangeText={(value) => handleInputChange('confirmPassword', value)}
             placeholder="Confirm Password"
-            keyboardType="default"
             secureTextEntry={true}
           />
 
-          <FormInput
-            value={formData.gender}
-            onChangeText={(value) => handleInputChange('gender', value)}
-            placeholder="Gender"
-          />
+          {/* Gender Selection */}
+          <View style={styles.inputContainer}>
+            <TouchableOpacity
+              style={[styles.textInput, { justifyContent: 'center' }]}
+              onPress={() => setGenderModalVisible(!genderModalVisible)}
+            >
+              <Text style={{
+                color: formData.gender ? '#000000' : '#999999',
+                fontSize: 16
+              }}>
+                {formData.gender || "Gender"}
+              </Text>
+              <Text style={{ position: 'absolute', right: 15, color: '#999999' }}>▼</Text>
+            </TouchableOpacity>
+
+            {genderModalVisible && (
+              <View style={styles.dropdownList}>
+                {genderOptions.map((option) => (
+                  <TouchableOpacity
+                    key={option}
+                    style={styles.dropdownItem}
+                    onPress={() => {
+                      handleInputChange('gender', option);
+                      setGenderModalVisible(false);
+                    }}
+                  >
+                    <Text style={styles.dropdownText}>{option}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
 
           <FormInput
             value={formData.reason}
@@ -295,8 +305,8 @@ const SignUpScreen = ({ navigation }) => {
 
       {/* Buttons */}
       <View style={styles.buttonContainer}>
-        <TouchableOpacity 
-          style={[styles.signUpButton, isLoading && styles.signUpButtonDisabled]} 
+        <TouchableOpacity
+          style={[styles.signUpButton, isLoading && styles.signUpButtonDisabled]}
           onPress={handleSignUp}
           disabled={isLoading}
         >
@@ -323,6 +333,24 @@ const SignUpScreen = ({ navigation }) => {
     </SafeAreaView>
   );
 };
+
+const FormInput = ({ label, value, onChangeText, placeholder, keyboardType = 'default', multiline = false, secureTextEntry = false }) => (
+  <View style={styles.inputContainer}>
+    <TextInput
+      style={[styles.textInput, multiline && styles.multilineInput]}
+      value={value}
+      onChangeText={onChangeText}
+      placeholder={placeholder}
+      placeholderTextColor="#999999"
+      keyboardType={keyboardType}
+      autoCapitalize={multiline ? 'sentences' : 'words'}
+      autoCorrect={false}
+      multiline={multiline}
+      numberOfLines={multiline ? 4 : 1}
+      secureTextEntry={secureTextEntry}
+    />
+  </View>
+);
 
 const styles = StyleSheet.create({
   container: {
@@ -380,6 +408,23 @@ const styles = StyleSheet.create({
   multilineInput: {
     height: 100,
     textAlignVertical: 'top',
+  },
+  dropdownList: {
+    marginTop: 5,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  dropdownItem: {
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  dropdownText: {
+    fontSize: 16,
+    color: '#333',
   },
   buttonContainer: {
     paddingHorizontal: 20,

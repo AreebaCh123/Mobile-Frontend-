@@ -9,6 +9,8 @@ import {
   Image,
   SafeAreaView,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radii, type } from "../themes/tokens";
@@ -131,115 +133,122 @@ export default function ProfileSetup({ navigation, route }) {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bgColor }}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
       >
-        {/* Back + Title */}
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backBtn}
+        <ScrollView
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <Ionicons name="chevron-back" size={24} color={textColor} />
-        </TouchableOpacity>
-
-        <Text style={[styles.title, { color: textColor }]}>Profile</Text>
-
-        {/* Avatar */}
-        <View style={styles.avatarWrap}>
-          <Image
-            source={{ uri: "https://i.imgur.com/5EOyTDQ.png" }}
-            style={styles.avatar}
-          />
-          <TouchableOpacity style={{ alignItems: "center", marginTop: 8 }}>
-            <Text style={styles.uploadTitle}>Upload Photo</Text>
-            <Text style={styles.uploadSubtitle}>Add a profile photo</Text>
+          {/* Back + Title */}
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backBtn}
+          >
+            <Ionicons name="chevron-back" size={24} color={textColor} />
           </TouchableOpacity>
-        </View>
 
-        {/* Form Fields */}
-        <Label text="Full Name" />
-        <Field
-          placeholder="Enter your full name"
-          value={form.fullName}
-          onChangeText={(t) => setVal("fullName", t)}
-        />
+          <Text style={[styles.title, { color: textColor }]}>Profile</Text>
 
-        <Label text="Profession" />
-        <Field
-          placeholder="Enter your profession"
-          value={form.profession}
-          onChangeText={(t) => setVal("profession", t)}
-        />
+          {/* Avatar */}
+          <View style={styles.avatarWrap}>
+            <Image
+              source={{ uri: "https://i.imgur.com/5EOyTDQ.png" }}
+              style={styles.avatar}
+            />
+            <TouchableOpacity style={{ alignItems: "center", marginTop: 8 }}>
+              <Text style={styles.uploadTitle}>Upload Photo</Text>
+              <Text style={styles.uploadSubtitle}>Add a profile photo</Text>
+            </TouchableOpacity>
+          </View>
 
-        <Label text="Age" />
-        <Field
-          placeholder="Enter your age"
-          keyboardType="numeric"
-          value={form.age}
-          onChangeText={(t) => setVal("age", t)}
-        />
+          {/* Form Fields */}
+          <Label text="Full Name" />
+          <Field
+            placeholder="Enter your full name"
+            value={form.fullName}
+            onChangeText={(t) => setVal("fullName", t)}
+          />
 
-        <Label text="Phone Number" />
-        <Field
-          placeholder="Enter your phone number"
-          keyboardType="phone-pad"
-          value={form.phone}
-          onChangeText={(t) => setVal("phone", t)}
-        />
+          <Label text="Profession" />
+          <Field
+            placeholder="Enter your profession"
+            value={form.profession}
+            onChangeText={(t) => setVal("profession", t)}
+          />
 
-        <Label text="City" />
-        <Field
-          placeholder="Enter your city"
-          value={form.city}
-          onChangeText={(t) => setVal("city", t)}
-        />
+          <Label text="Age" />
+          <Field
+            placeholder="Enter your age"
+            keyboardType="numeric"
+            value={form.age}
+            onChangeText={(t) => setVal("age", t)}
+          />
 
-        <Label text="Country" />
-        <Field
-          placeholder="Enter your country"
-          value={form.country}
-          onChangeText={(t) => setVal("country", t)}
-        />
+          <Label text="Phone Number" />
+          <Field
+            placeholder="Enter your phone number"
+            keyboardType="phone-pad"
+            value={form.phone}
+            onChangeText={(t) => setVal("phone", t)}
+          />
 
-        <Label text="Marital Status" />
-        <Field
-          placeholder="Select your marital status"
-          value={form.maritalStatus}
-          onChangeText={(t) => setVal("maritalStatus", t)}
-        />
+          <Label text="City" />
+          <Field
+            placeholder="Enter your city"
+            value={form.city}
+            onChangeText={(t) => setVal("city", t)}
+          />
 
-        <Label text="Emergency Contact Name" />
-        <Field
-          placeholder="Enter contact full name"
-          value={form.emergencyContactName}
-          onChangeText={(t) => setVal("emergencyContactName", t)}
-        />
+          <Label text="Country" />
+          <Field
+            placeholder="Enter your country"
+            value={form.country}
+            onChangeText={(t) => setVal("country", t)}
+          />
 
-        <Label text="Emergency Contact Relation" />
-        <Field
-          placeholder="Enter relation (e.g., Mother, Friend)"
-          value={form.emergencyContactRelation}
-          onChangeText={(t) => setVal("emergencyContactRelation", t)}
-        />
+          <Label text="Marital Status" />
+          <Field
+            placeholder="Select your marital status"
+            value={form.maritalStatus}
+            onChangeText={(t) => setVal("maritalStatus", t)}
+          />
 
-        <Label text="Emergency Contact Phone" />
-        <Field
-          placeholder="Enter emergency contact phone"
-          keyboardType="phone-pad"
-          value={form.emergencyContactPhone}
-          onChangeText={(t) => setVal("emergencyContactPhone", t)}
-        />
+          <Label text="Emergency Contact Name" />
+          <Field
+            placeholder="Enter contact full name"
+            value={form.emergencyContactName}
+            onChangeText={(t) => setVal("emergencyContactName", t)}
+          />
 
-        {/* Save Button */}
-        <TouchableOpacity
-          style={styles.saveBtn}
-          onPress={handleSave}
-          disabled={isSaving}
-        >
-          <Text style={styles.saveText}>{isSaving ? "Saving..." : "Save"}</Text>
-        </TouchableOpacity>
-      </ScrollView>
+          <Label text="Emergency Contact Relation" />
+          <Field
+            placeholder="Enter relation (e.g., Mother, Friend)"
+            value={form.emergencyContactRelation}
+            onChangeText={(t) => setVal("emergencyContactRelation", t)}
+          />
+
+          <Label text="Emergency Contact Phone" />
+          <Field
+            placeholder="Enter emergency contact phone"
+            keyboardType="phone-pad"
+            value={form.emergencyContactPhone}
+            onChangeText={(t) => setVal("emergencyContactPhone", t)}
+          />
+
+          {/* Save Button */}
+          <TouchableOpacity
+            style={styles.saveBtn}
+            onPress={handleSave}
+            disabled={isSaving}
+          >
+            <Text style={styles.saveText}>{isSaving ? "Saving..." : "Save"}</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

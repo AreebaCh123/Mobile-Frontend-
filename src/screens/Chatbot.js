@@ -14,12 +14,17 @@ import {
   ActivityIndicator,
   Modal,
   FlatList,
+  Animated,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors, spacing, radii, type } from "../themes/tokens";
 import { ms } from "../themes/scale";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+import {
+  ExpoSpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+} from "expo-speech-recognition";
 
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || "http://127.0.0.1:8000";
 
@@ -34,15 +39,257 @@ export default function Chatbot({ navigation }) {
   const [showHistory, setShowHistory] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcript, setTranscript] = useState("");
   const scrollRef = useRef(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const quickReplies = [
     "I'm feeling anxious",
-    "I'm having a tough day", 
+    "I'm having a tough day",
     "I need some support",
     "I'm feeling better",
     "Can you help me relax?",
   ];
+
+  // Speech recognition event handlers
+  useSpeechRecognitionEvent("start", () => {
+    setIsRecording(true);
+    setTranscript("");
+    // Start pulse animation
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.3,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  });
+
+  useSpeechRecognitionEvent("end", () => {
+    setIsRecording(false);
+    pulseAnim.stopAnimation();
+    pulseAnim.setValue(1);
+  });
+
+  useSpeechRecognitionEvent("result", (event) => {
+    // Get the latest transcript
+    if (event.results && event.results.length > 0) {
+      const latestResult = event.results[event.results.length - 1];
+      if (latestResult && latestResult.transcript) {
+        setTranscript(latestResult.transcript);
+      }
+    }
+  });
+
+  useSpeechRecognitionEvent("error", (event) => {
+    console.error("Speech recognition error:", event.error);
+    setIsRecording(false);
+    pulseAnim.stopAnimation();
+    pulseAnim.setValue(1);
+
+    if (event.error === "not-allowed" || event.error === "permission-denied") {
+      Alert.alert(
+        "Microphone Permission Required",
+        "Please enable microphone access in your device settings to use voice input."
+      );
+    } else if (event.error !== "no-speech") {
+      // Don't show error for "no-speech" - it's normal when user releases without speaking
+      Alert.alert(
+        "Voice Input Error",
+        "Could not recognize speech. Please try again."
+      );
+    }
+  });
+
+  // Start voice recording (called on press in)
+  const startVoiceRecording = async () => {
+    try {
+      // Request permissions
+      const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!result.granted) {
+        Alert.alert(
+          "Permission Required",
+          "Microphone permission is required for voice input. Please enable it in settings."
+        );
+        return;
+      }
+
+      // Start speech recognition
+      ExpoSpeechRecognitionModule.start({
+        lang: "en-US",
+        interimResults: true,
+        maxAlternatives: 1,
+        continuous: true,
+      });
+    } catch (error) {
+      console.error("Error starting voice recording:", error);
+      Alert.alert("Error", "Could not start voice recording. Please try again.");
+    }
+  };
+
+  // Stop voice recording and send message (called on press out)
+  const stopVoiceRecordingAndSend = async () => {
+    try {
+      ExpoSpeechRecognitionModule.stop();
+
+      // Explicitly reset recording state immediately to ensure UI updates
+      setIsRecording(false);
+      pulseAnim.stopAnimation();
+      pulseAnim.setValue(1);
+
+      // Small delay to ensure we have the final transcript
+      setTimeout(() => {
+        if (transcript.trim()) {
+          // Set the transcript as input and send
+          setInput(transcript.trim());
+          // Trigger send after setting input
+          setTimeout(() => {
+            sendMessageWithText(transcript.trim());
+          }, 100);
+        }
+        setTranscript("");
+      }, 200);
+    } catch (error) {
+      console.error("Error stopping voice recording:", error);
+      setIsRecording(false);
+      pulseAnim.stopAnimation();
+      pulseAnim.setValue(1);
+      setTranscript("");
+    }
+  };
+
+  // Send message with specific text (for voice input)
+  const sendMessageWithText = async (text) => {
+    if (!text || !userId) return;
+
+    // Add user message to UI immediately
+    const userMessage = {
+      id: Date.now().toString(),
+      author: "me",
+      name: "You",
+      text: text,
+    };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+    setIsTyping(true);
+    scrollRef.current?.scrollToEnd({ animated: true });
+
+    // Create bot message placeholder for streaming
+    const botMessageId = (Date.now() + 1).toString();
+    const botMessage = {
+      id: botMessageId,
+      author: "bot",
+      name: "Nia",
+      text: "",
+    };
+    setMessages((prev) => [...prev, botMessage]);
+
+    try {
+      const token = await AsyncStorage.getItem("authToken");
+      if (!token) {
+        throw new Error("No authentication token found");
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/chatbot/message/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          message: text,
+          user_name: userName,
+        }),
+      });
+
+      if (response.ok) {
+        // Handle streaming response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullText = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.type === 'token') {
+                  fullText += data.content;
+                  setMessages((prev) =>
+                    prev.map((msg) =>
+                      msg.id === botMessageId
+                        ? { ...msg, text: fullText }
+                        : msg
+                    )
+                  );
+                  scrollRef.current?.scrollToEnd({ animated: false });
+                }
+              } catch (e) {
+                console.error('Error parsing streaming data:', e);
+              }
+            }
+          }
+        }
+
+        if (fullText) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMessageId
+                ? { ...msg, text: fullText }
+                : msg
+            )
+          );
+        } else {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMessageId
+                ? { ...msg, text: "I'm here to listen. Can you tell me more?" }
+                : msg
+            )
+          );
+        }
+
+        scrollRef.current?.scrollToEnd({ animated: true });
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to get response");
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMessageId
+            ? {
+              ...msg,
+              text: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment.",
+            }
+            : msg
+        )
+      );
+      Alert.alert(
+        "Connection Error",
+        "Could not send your message. Please check your internet connection and try again."
+      );
+    } finally {
+      setIsTyping(false);
+    }
+  };
 
   // Load user info from AsyncStorage
   useEffect(() => {
@@ -71,10 +318,10 @@ export default function Chatbot({ navigation }) {
   const initializeChat = async () => {
     try {
       setIsLoading(true);
-      
+
       // Load conversation history first
       await loadConversationHistory();
-      
+
       // Start new conversation if no history exists
       if (messages.length === 0) {
         await startConversation();
@@ -116,7 +363,7 @@ export default function Chatbot({ navigation }) {
           }));
           setMessages(formattedMessages);
           setConversationStarted(true);
-          
+
           // Scroll to bottom after loading
           setTimeout(() => {
             scrollRef.current?.scrollToEnd({ animated: true });
@@ -158,7 +405,7 @@ export default function Chatbot({ navigation }) {
         };
         setMessages([greetingMessage]);
         setConversationStarted(true);
-        
+
         setTimeout(() => {
           scrollRef.current?.scrollToEnd({ animated: true });
         }, 100);
@@ -285,7 +532,7 @@ export default function Chatbot({ navigation }) {
             )
           );
         }
-        
+
         scrollRef.current?.scrollToEnd({ animated: true });
       } else {
         const errorData = await response.json();
@@ -298,9 +545,9 @@ export default function Chatbot({ navigation }) {
         prev.map((msg) =>
           msg.id === botMessageId
             ? {
-                ...msg,
-                text: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment.",
-              }
+              ...msg,
+              text: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment.",
+            }
             : msg
         )
       );
@@ -324,7 +571,7 @@ export default function Chatbot({ navigation }) {
       console.log("No userId available for fetching history");
       return;
     }
-    
+
     try {
       setLoadingHistory(true);
       const token = await AsyncStorage.getItem("authToken");
@@ -355,7 +602,7 @@ export default function Chatbot({ navigation }) {
       if (response.ok) {
         const data = await response.json();
         console.log("History data received:", data);
-        
+
         if (data.messages && data.messages.length > 0) {
           // Group messages into conversations by date
           const groupedConversations = groupMessagesByDate(data.messages);
@@ -383,7 +630,7 @@ export default function Chatbot({ navigation }) {
         userId: userId,
         apiUrl: API_BASE_URL,
       });
-      
+
       // Handle different error cases
       if (error.message.includes("404") || error.message.includes("not found")) {
         // No history found - this is okay, just show empty state
@@ -391,14 +638,14 @@ export default function Chatbot({ navigation }) {
       } else if (error.message.includes("401") || error.message.includes("Authentication")) {
         // Authentication error
         Alert.alert(
-          "Authentication Error", 
+          "Authentication Error",
           "Please log in again to view your chat history."
         );
         setConversationHistory([]);
       } else if (error.message.includes("Network error") || error.message.includes("fetch")) {
         // Network error
         Alert.alert(
-          "Connection Error", 
+          "Connection Error",
           "Could not connect to the server. Please check your internet connection and try again."
         );
         setConversationHistory([]);
@@ -409,7 +656,7 @@ export default function Chatbot({ navigation }) {
         // Only show alert for critical errors
         if (!error.message.includes("empty") && !error.message.includes("No messages")) {
           Alert.alert(
-            "Error", 
+            "Error",
             `Could not load chat history: ${error.message || "Please try again later."}`
           );
         }
@@ -426,22 +673,22 @@ export default function Chatbot({ navigation }) {
     today.setHours(0, 0, 0, 0);
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
-    
+
     const groupedByDay = {
       today: [],
       yesterday: [],
       earlier: {},
     };
-    
+
     // Sort messages by date (oldest first)
-    const sortedMessages = [...messages].sort((a, b) => 
+    const sortedMessages = [...messages].sort((a, b) =>
       new Date(a.created_at) - new Date(b.created_at)
     );
-    
+
     sortedMessages.forEach((msg) => {
       const messageDate = new Date(msg.created_at);
       messageDate.setHours(0, 0, 0, 0);
-      
+
       if (messageDate.getTime() === today.getTime()) {
         groupedByDay.today.push(msg);
       } else if (messageDate.getTime() === yesterday.getTime()) {
@@ -455,10 +702,10 @@ export default function Chatbot({ navigation }) {
         groupedByDay.earlier[dateKey].push(msg);
       }
     });
-    
+
     // Build result with day sections - each day is ONE conversation
     const result = [];
-    
+
     // Today - all messages from today as one conversation
     if (groupedByDay.today.length > 0) {
       result.push({
@@ -473,7 +720,7 @@ export default function Chatbot({ navigation }) {
         }],
       });
     }
-    
+
     // Yesterday - all messages from yesterday as one conversation
     if (groupedByDay.yesterday.length > 0) {
       result.push({
@@ -488,20 +735,20 @@ export default function Chatbot({ navigation }) {
         }],
       });
     }
-    
+
     // Earlier - each date is one conversation
     const sortedEarlierDates = Object.keys(groupedByDay.earlier).sort().reverse();
-    
+
     sortedEarlierDates.forEach((dateKey) => {
       const date = new Date(dateKey);
       const dayMessages = groupedByDay.earlier[dateKey];
-      
+
       result.push({
         type: 'section',
-        label: date.toLocaleDateString("en-US", { 
-          month: "long", 
-          day: "numeric", 
-          year: date.getFullYear() !== today.getFullYear() ? "numeric" : undefined 
+        label: date.toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: date.getFullYear() !== today.getFullYear() ? "numeric" : undefined
         }),
         date: date,
         conversations: [{
@@ -512,7 +759,7 @@ export default function Chatbot({ navigation }) {
         }],
       });
     });
-    
+
     return result;
   };
 
@@ -520,7 +767,7 @@ export default function Chatbot({ navigation }) {
     // Get first user message and first bot response
     const userMessage = messages.find(m => m.role === "user");
     const botMessage = messages.find(m => m.role === "assistant");
-    
+
     if (userMessage && botMessage) {
       return {
         user: userMessage.content.substring(0, 50) + (userMessage.content.length > 50 ? "..." : ""),
@@ -547,7 +794,7 @@ export default function Chatbot({ navigation }) {
     setMessages(formattedMessages);
     setConversationStarted(true);
     setShowHistory(false);
-    
+
     // Scroll to bottom
     setTimeout(() => {
       scrollRef.current?.scrollToEnd({ animated: true });
@@ -560,7 +807,7 @@ export default function Chatbot({ navigation }) {
     setInput("");
     setConversationStarted(false);
     setShowHistory(false);
-    
+
     // Start a new conversation
     await startConversation();
   };
@@ -569,7 +816,7 @@ export default function Chatbot({ navigation }) {
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
-    
+
     if (date.toDateString() === today.toDateString()) {
       return "Today";
     } else if (date.toDateString() === yesterday.toDateString()) {
@@ -609,7 +856,7 @@ export default function Chatbot({ navigation }) {
           <TouchableOpacity onPress={handleOpenHistory} hitSlop={10} style={styles.historyButton}>
             <Feather name="clock" size={18} color={colors.white} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => {}} hitSlop={10} style={styles.calendarButton}>
+          <TouchableOpacity onPress={() => { }} hitSlop={10} style={styles.calendarButton}>
             <Feather name="calendar" size={18} color={colors.white} />
           </TouchableOpacity>
         </View>
@@ -617,8 +864,8 @@ export default function Chatbot({ navigation }) {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={ms(10)}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? ms(10) : 0}
       >
         <ScrollView
           ref={scrollRef}
@@ -673,7 +920,7 @@ export default function Chatbot({ navigation }) {
               </View>
             );
           })}
-          
+
           {/* Typing Indicator */}
           {isTyping && (
             <View style={{ marginBottom: spacing.lg }}>
@@ -715,20 +962,52 @@ export default function Chatbot({ navigation }) {
 
         {/* Composer */}
         <View style={styles.composer}>
+          {/* Recording indicator overlay */}
+          {isRecording && (
+            <View style={styles.recordingOverlay}>
+              <View style={styles.recordingIndicator}>
+                <View style={styles.recordingDot} />
+                <Text style={styles.recordingText}>
+                  {transcript || "Listening..."}
+                </Text>
+              </View>
+            </View>
+          )}
+
           <TextInput
             style={styles.input}
-            placeholder="Type a message..."
+            placeholder={isRecording ? "Listening..." : "Type a message..."}
             placeholderTextColor={colors.accent}
-            value={input}
+            value={isRecording ? transcript : input}
             onChangeText={setInput}
             multiline
+            editable={!isRecording}
           />
           <TouchableOpacity onPress={send} style={styles.sendBtn} hitSlop={10}>
             <Feather name="send" size={18} color={colors.white} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => {}} style={styles.micBtn} hitSlop={10}>
-            <Feather name="mic" size={18} color={colors.accent} />
-          </TouchableOpacity>
+
+          {/* Voice input button with press-and-hold */}
+          <Animated.View
+            style={[
+              styles.micBtn,
+              isRecording && styles.micBtnRecording,
+              { transform: [{ scale: pulseAnim }] },
+            ]}
+          >
+            <TouchableOpacity
+              onPressIn={startVoiceRecording}
+              onPressOut={stopVoiceRecordingAndSend}
+              style={styles.micBtnInner}
+              hitSlop={10}
+            >
+              <Feather
+                name="mic"
+                size={18}
+                color={isRecording ? colors.white : colors.accent}
+              />
+            </TouchableOpacity>
+          </Animated.View>
         </View>
       </KeyboardAvoidingView>
 
@@ -745,9 +1024,9 @@ export default function Chatbot({ navigation }) {
               <Text style={styles.historyTitle}>Chat History</Text>
             </View>
             <View style={styles.historyHeaderRight}>
-              <TouchableOpacity 
-                onPress={handleNewChat} 
-                hitSlop={10} 
+              <TouchableOpacity
+                onPress={handleNewChat}
+                hitSlop={10}
                 style={styles.newChatButton}
               >
                 <Feather name="plus" size={18} color={colors.white} />
@@ -787,7 +1066,7 @@ export default function Chatbot({ navigation }) {
                     </View>
                   );
                 }
-                
+
                 return (
                   <TouchableOpacity
                     style={styles.historyItem}
@@ -1134,5 +1413,47 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     fontSize: 12,
     letterSpacing: 0.5,
+  },
+  // Voice recording styles
+  micBtnRecording: {
+    backgroundColor: colors.accent,
+  },
+  micBtnInner: {
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  recordingOverlay: {
+    position: "absolute",
+    top: -60,
+    left: spacing.xl,
+    right: spacing.xl,
+    zIndex: 10,
+  },
+  recordingIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(139, 92, 246, 0.95)",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radii.lg,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  recordingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#FF4444",
+    marginRight: spacing.sm,
+  },
+  recordingText: {
+    ...type.body,
+    color: colors.white,
+    flex: 1,
   },
 });

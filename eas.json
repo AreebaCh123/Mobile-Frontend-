@@ -5,7 +5,12 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://13.201.222.148",
+        "EXPO_PUBLIC_GOOGLE_EXPO_CLIENT_ID": "107013433514-v63sifp5atq883qsc908jo6fdf6tkcts.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "107013433514-4isv9fkpkujtghegkjb304t84k64u3n0.apps.googleusercontent.com"
+      }
     },
     "production": {
       "android": {
@@ -17,4 +22,3 @@
     }
   }
 }
-
