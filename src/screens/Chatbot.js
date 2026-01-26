@@ -21,10 +21,22 @@ import { colors, spacing, radii, type } from "../themes/tokens";
 import { ms } from "../themes/scale";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
-import {
-  ExpoSpeechRecognitionModule,
-  useSpeechRecognitionEvent,
-} from "expo-speech-recognition";
+import EventSource from "react-native-sse";
+
+// Gracefully handle missing speech recognition (for Expo Go compatibility)
+let ExpoSpeechRecognitionModule = null;
+let useSpeechRecognitionEvent = () => { }; // No-op hook
+let isSpeechAvailable = false;
+
+try {
+  const speechModule = require("expo-speech-recognition");
+  ExpoSpeechRecognitionModule = speechModule.ExpoSpeechRecognitionModule;
+  useSpeechRecognitionEvent = speechModule.useSpeechRecognitionEvent;
+  isSpeechAvailable = true;
+} catch (e) {
+  console.log("Speech recognition not available (running in Expo Go)");
+}
+
 
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || "http://127.0.0.1:8000";
 
@@ -43,6 +55,40 @@ export default function Chatbot({ navigation }) {
   const [transcript, setTranscript] = useState("");
   const scrollRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Animated dots for typing indicator
+  const dot1Anim = useRef(new Animated.Value(0)).current;
+  const dot2Anim = useRef(new Animated.Value(0)).current;
+  const dot3Anim = useRef(new Animated.Value(0)).current;
+
+  // Typing dots animation
+  useEffect(() => {
+    if (isTyping) {
+      const animateDots = () => {
+        Animated.loop(
+          Animated.stagger(150, [
+            Animated.sequence([
+              Animated.timing(dot1Anim, { toValue: 1, duration: 300, useNativeDriver: true }),
+              Animated.timing(dot1Anim, { toValue: 0, duration: 300, useNativeDriver: true }),
+            ]),
+            Animated.sequence([
+              Animated.timing(dot2Anim, { toValue: 1, duration: 300, useNativeDriver: true }),
+              Animated.timing(dot2Anim, { toValue: 0, duration: 300, useNativeDriver: true }),
+            ]),
+            Animated.sequence([
+              Animated.timing(dot3Anim, { toValue: 1, duration: 300, useNativeDriver: true }),
+              Animated.timing(dot3Anim, { toValue: 0, duration: 300, useNativeDriver: true }),
+            ]),
+          ])
+        ).start();
+      };
+      animateDots();
+    } else {
+      dot1Anim.setValue(0);
+      dot2Anim.setValue(0);
+      dot3Anim.setValue(0);
+    }
+  }, [isTyping]);
 
   const quickReplies = [
     "I'm feeling anxious",
@@ -198,78 +244,85 @@ export default function Chatbot({ navigation }) {
         throw new Error("No authentication token found");
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/chatbot/message/`, {
-        method: "POST",
+      // Use EventSource for proper SSE streaming
+      const es = new EventSource(`${API_BASE_URL}/api/chatbot/message/`, {
         headers: {
           "Content-Type": "application/json",
+          "Accept": "text/event-stream",
           Authorization: `Bearer ${token}`,
         },
+        method: "POST",
         body: JSON.stringify({
           message: text,
           user_name: userName,
         }),
+        pollingInterval: 0, // Disable polling, use true streaming
       });
 
-      if (response.ok) {
-        // Handle streaming response
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let fullText = '';
+      const listener = (event) => {
+        if (event.type === "open") {
+          console.log("SSE connection opened");
+        } else if (event.type === "message") {
+          try {
+            const data = JSON.parse(event.data);
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.type === 'token') {
-                  fullText += data.content;
-                  setMessages((prev) =>
-                    prev.map((msg) =>
-                      msg.id === botMessageId
-                        ? { ...msg, text: fullText }
-                        : msg
-                    )
-                  );
-                  scrollRef.current?.scrollToEnd({ animated: false });
-                }
-              } catch (e) {
-                console.error('Error parsing streaming data:', e);
-              }
+            if (data.type === "token") {
+              // Append token to bot message
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: msg.text + data.content }
+                    : msg
+                )
+              );
+              scrollRef.current?.scrollToEnd({ animated: false });
+            } else if (data.type === "done") {
+              console.log("Streaming complete");
+              es.close();
+              setIsTyping(false);
+            } else if (data.type === "error") {
+              console.error("Stream error:", data.content);
+              es.close();
+              setIsTyping(false);
+              // Update with error message
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: "I'm sorry, I encountered an error. Please try again." }
+                    : msg
+                )
+              );
             }
+          } catch (e) {
+            console.error("Error parsing SSE data:", e);
           }
-        }
-
-        if (fullText) {
+        } else if (event.type === "error") {
+          console.error("SSE connection error:", event.message);
+          es.close();
+          setIsTyping(false);
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === botMessageId
-                ? { ...msg, text: fullText }
+                ? { ...msg, text: "I'm sorry, I'm having trouble connecting right now. Please try again." }
                 : msg
             )
           );
-        } else {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === botMessageId
-                ? { ...msg, text: "I'm here to listen. Can you tell me more?" }
-                : msg
-            )
-          );
+        } else if (event.type === "exception") {
+          console.error("SSE exception:", event.message, event.error);
+          es.close();
+          setIsTyping(false);
         }
+      };
 
-        scrollRef.current?.scrollToEnd({ animated: true });
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to get response");
-      }
+      es.addEventListener("open", listener);
+      es.addEventListener("message", listener);
+      es.addEventListener("error", listener);
+
+      // Clean up on unmount
+      return () => {
+        es.removeAllEventListeners();
+        es.close();
+      };
     } catch (error) {
       console.error("Error sending message:", error);
       setMessages((prev) =>
@@ -462,85 +515,86 @@ export default function Chatbot({ navigation }) {
         throw new Error("No authentication token found");
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/chatbot/message/`, {
-        method: "POST",
+      // Use EventSource for proper SSE streaming
+      const es = new EventSource(`${API_BASE_URL}/api/chatbot/message/`, {
         headers: {
           "Content-Type": "application/json",
+          "Accept": "text/event-stream",
           Authorization: `Bearer ${token}`,
         },
+        method: "POST",
         body: JSON.stringify({
           message: trimmed,
           user_name: userName,
         }),
+        pollingInterval: 0, // Disable polling, use true streaming
       });
 
-      if (response.ok) {
-        // Handle streaming response
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let fullText = '';
+      const listener = (event) => {
+        if (event.type === "open") {
+          console.log("SSE connection opened");
+        } else if (event.type === "message") {
+          try {
+            const data = JSON.parse(event.data);
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.type === 'token') {
-                  fullText += data.content;
-                  // Update bot message with streaming tokens
-                  setMessages((prev) =>
-                    prev.map((msg) =>
-                      msg.id === botMessageId
-                        ? { ...msg, text: fullText }
-                        : msg
-                    )
-                  );
-                  // Auto-scroll as message updates
-                  scrollRef.current?.scrollToEnd({ animated: false });
-                }
-              } catch (e) {
-                console.error('Error parsing streaming data:', e);
-              }
+            if (data.type === "token") {
+              // Append token to bot message
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: msg.text + data.content }
+                    : msg
+                )
+              );
+              scrollRef.current?.scrollToEnd({ animated: false });
+            } else if (data.type === "done") {
+              console.log("Streaming complete");
+              es.close();
+              setIsTyping(false);
+            } else if (data.type === "error") {
+              console.error("Stream error:", data.content);
+              es.close();
+              setIsTyping(false);
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: "I'm sorry, I encountered an error. Please try again." }
+                    : msg
+                )
+              );
             }
+          } catch (e) {
+            console.error("Error parsing SSE data:", e);
           }
-        }
-
-        // Ensure final message is displayed
-        if (fullText) {
+        } else if (event.type === "error") {
+          console.error("SSE connection error:", event.message);
+          es.close();
+          setIsTyping(false);
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === botMessageId
-                ? { ...msg, text: fullText }
+                ? { ...msg, text: "I'm sorry, I'm having trouble connecting right now. Please try again." }
                 : msg
             )
           );
-        } else {
-          // Fallback if no streaming data received
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === botMessageId
-                ? { ...msg, text: "I'm here to listen. Can you tell me more?" }
-                : msg
-            )
-          );
+        } else if (event.type === "exception") {
+          console.error("SSE exception:", event.message, event.error);
+          es.close();
+          setIsTyping(false);
         }
+      };
 
-        scrollRef.current?.scrollToEnd({ animated: true });
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to get response");
-      }
+      es.addEventListener("open", listener);
+      es.addEventListener("message", listener);
+      es.addEventListener("error", listener);
+
+      // Clean up on unmount
+      return () => {
+        es.removeAllEventListeners();
+        es.close();
+      };
     } catch (error) {
       console.error("Error sending message:", error);
-      // Update bot message with error
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === botMessageId
@@ -877,26 +931,21 @@ export default function Chatbot({ navigation }) {
             const mine = m.author === "me";
             return (
               <View key={m.id} style={{ marginBottom: spacing.lg }}>
-                {/* Name above bubble */}
-                <Text
-                  style={[
-                    styles.name,
-                    { textAlign: mine ? "right" : "left", color: colors.accent },
-                  ]}
-                >
-                  {m.name}
-                </Text>
-
                 <View
                   style={[
                     styles.row,
                     { justifyContent: mine ? "flex-end" : "flex-start" },
                   ]}
                 >
-                  {/* Avatar circle (icon) */}
+                  {/* Bot avatar with name above */}
                   {!mine && (
-                    <View style={[styles.avatar, { marginRight: spacing.sm }]}>
-                      <Feather name="user" size={16} color={colors.text} />
+                    <View style={styles.avatarContainer}>
+                      <Text style={[styles.name, { color: colors.accent }]}>
+                        {m.name}
+                      </Text>
+                      <View style={[styles.avatar, { marginRight: spacing.sm }]}>
+                        <Feather name="user" size={16} color={colors.text} />
+                      </View>
                     </View>
                   )}
 
@@ -911,9 +960,15 @@ export default function Chatbot({ navigation }) {
                     </Text>
                   </View>
 
+                  {/* User avatar with name above */}
                   {mine && (
-                    <View style={[styles.avatar, { marginLeft: spacing.sm }]}>
-                      <Feather name="user" size={16} color={colors.text} />
+                    <View style={styles.avatarContainer}>
+                      <Text style={[styles.name, { color: colors.accent, textAlign: "center" }]}>
+                        {m.name}
+                      </Text>
+                      <View style={[styles.avatar, { marginLeft: spacing.sm }]}>
+                        <Feather name="user" size={16} color={colors.text} />
+                      </View>
                     </View>
                   )}
                 </View>
@@ -924,18 +979,20 @@ export default function Chatbot({ navigation }) {
           {/* Typing Indicator */}
           {isTyping && (
             <View style={{ marginBottom: spacing.lg }}>
-              <Text style={[styles.name, { textAlign: "left", color: colors.accent }]}>
-                Nia
-              </Text>
               <View style={[styles.row, { justifyContent: "flex-start" }]}>
-                <View style={[styles.avatar, { marginRight: spacing.sm }]}>
-                  <Feather name="user" size={16} color={colors.text} />
+                <View style={styles.avatarContainer}>
+                  <Text style={[styles.name, { color: colors.accent }]}>
+                    Nia
+                  </Text>
+                  <View style={[styles.avatar, { marginRight: spacing.sm }]}>
+                    <Feather name="user" size={16} color={colors.text} />
+                  </View>
                 </View>
                 <View style={[styles.bubble, styles.botBubble, styles.typingBubble]}>
                   <View style={styles.typingDots}>
-                    <View style={[styles.typingDot, styles.typingDot1]} />
-                    <View style={[styles.typingDot, styles.typingDot2]} />
-                    <View style={[styles.typingDot, styles.typingDot3]} />
+                    <Animated.View style={[styles.typingDot, { transform: [{ scale: dot1Anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.4] }) }] }]} />
+                    <Animated.View style={[styles.typingDot, { transform: [{ scale: dot2Anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.4] }) }] }]} />
+                    <Animated.View style={[styles.typingDot, { transform: [{ scale: dot3Anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.4] }) }] }]} />
                   </View>
                 </View>
               </View>
@@ -987,27 +1044,29 @@ export default function Chatbot({ navigation }) {
             <Feather name="send" size={18} color={colors.white} />
           </TouchableOpacity>
 
-          {/* Voice input button with press-and-hold */}
-          <Animated.View
-            style={[
-              styles.micBtn,
-              isRecording && styles.micBtnRecording,
-              { transform: [{ scale: pulseAnim }] },
-            ]}
-          >
-            <TouchableOpacity
-              onPressIn={startVoiceRecording}
-              onPressOut={stopVoiceRecordingAndSend}
-              style={styles.micBtnInner}
-              hitSlop={10}
+          {/* Voice input button with press-and-hold - only show if speech is available */}
+          {isSpeechAvailable && (
+            <Animated.View
+              style={[
+                styles.micBtn,
+                isRecording && styles.micBtnRecording,
+                { transform: [{ scale: pulseAnim }] },
+              ]}
             >
-              <Feather
-                name="mic"
-                size={18}
-                color={isRecording ? colors.white : colors.accent}
-              />
-            </TouchableOpacity>
-          </Animated.View>
+              <TouchableOpacity
+                onPressIn={startVoiceRecording}
+                onPressOut={stopVoiceRecordingAndSend}
+                style={styles.micBtnInner}
+                hitSlop={10}
+              >
+                <Feather
+                  name="mic"
+                  size={18}
+                  color={isRecording ? colors.white : colors.accent}
+                />
+              </TouchableOpacity>
+            </Animated.View>
+          )}
         </View>
       </KeyboardAvoidingView>
 
@@ -1167,6 +1226,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFE7ED",
     alignItems: "center",
     justifyContent: "center",
+  },
+  avatarContainer: {
+    alignItems: "center",
+    justifyContent: "flex-end",
   },
 
   bubble: {
