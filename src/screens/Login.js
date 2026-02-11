@@ -33,21 +33,14 @@ const LoginScreen = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
-  const redirectUri = makeRedirectUri({ useProxy: true });
-
-  const googleRequestConfig = {
-    expoClientId: GOOGLE_CONFIG?.expoClientId,
-    redirectUri,
-  };
-
-  if (GOOGLE_CONFIG?.androidClientId) {
-    googleRequestConfig.androidClientId = GOOGLE_CONFIG.androidClientId;
-  }
-  if (GOOGLE_CONFIG?.iosClientId) {
-    googleRequestConfig.iosClientId = GOOGLE_CONFIG.iosClientId;
-  }
-
-  const [googleRequest, googleResponse, googlePromptAsync] = Google.useIdTokenAuthRequest(googleRequestConfig);
+  // Let expo-auth-session choose the correct redirect URI for the Expo Auth proxy.
+  // This should be https://auth.expo.io/@areebach123/MobileApp when running in Expo Go.
+  const [googleRequest, googleResponse, googlePromptAsync] =
+    Google.useIdTokenAuthRequest({
+      expoClientId: GOOGLE_CONFIG?.expoClientId,
+      iosClientId: GOOGLE_CONFIG?.iosClientId || GOOGLE_CONFIG?.expoClientId,
+      androidClientId: GOOGLE_CONFIG?.androidClientId || GOOGLE_CONFIG?.expoClientId,
+    });
 
   useEffect(() => {
     const finishGoogleLogin = async () => {

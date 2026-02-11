@@ -16,6 +16,7 @@ export default {
     },
     ios: {
       supportsTablet: true,
+      bundleIdentifier: 'com.areebach.mindmate', // Must match Google iOS OAuth client
     },
     android: {
       package: 'com.areebach.mindmate',
@@ -29,17 +30,17 @@ export default {
       favicon: './assets/favicon.png',
     },
     plugins: [
-      'expo-asset', 
-      'expo-font', 
-      "expo-web-browser",
+      'expo-asset',
+      'expo-font',
+      'expo-web-browser',
       [
-        "expo-notifications",
+        'expo-notifications',
         {
-          "icon": "./assets/icon.png",
-          "color": "#ffffff",
-          "sounds": [],
-        }
-      ]
+          icon: './assets/icon.png',
+          color: '#ffffff',
+          sounds: [],
+        },
+      ],
     ],
     extra: {
       apiUrl: process.env.EXPO_PUBLIC_API_URL,
