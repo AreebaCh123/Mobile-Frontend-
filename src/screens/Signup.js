@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useState, useContext } from 'react';
 import {
   View,
   Text,
@@ -10,18 +10,10 @@ import {
   Alert,
   ScrollView,
 } from 'react-native';
-import * as WebBrowser from 'expo-web-browser';
-import * as Google from 'expo-auth-session/providers/google';
-import { makeRedirectUri } from 'expo-auth-session';
 import Constants from 'expo-constants';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemeContext } from '../context/ThemeContext';
 
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://127.0.0.1:8000';
-const GOOGLE_CONFIG = Constants.expoConfig?.extra?.google || {};
-const isExpoGo = Constants.appOwnership === 'expo';
-
-WebBrowser.maybeCompleteAuthSession();
 
 
 // ✅ MOVED OUTSIDE (IMPORTANT FIX)
@@ -64,77 +56,12 @@ const SignUpScreen = ({ navigation }) => {
   });
 
   const [isLoading, setIsLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
 
   const { isDark } = useContext(ThemeContext);
 
   const bgColor = isDark ? '#050509' : '#F8F9FA';
   const headerBg = isDark ? '#050509' : '#FFFFFF';
   const headerText = isDark ? '#FFFFFF' : '#000000';
-
-  // Google auth requires a platform-specific client id. Even in Expo Go on iOS,
-  // `iosClientId` must be provided (otherwise you'll get:
-  // "Client Id property `iosClientId` must be defined...").
-  // We let expo-auth-session choose the correct redirect URI for the Expo Auth proxy.
-  const [request, response, promptAsync] =
-    Google.useIdTokenAuthRequest({
-      expoClientId: GOOGLE_CONFIG?.expoClientId,
-      iosClientId: GOOGLE_CONFIG?.iosClientId || GOOGLE_CONFIG?.expoClientId,
-      androidClientId: GOOGLE_CONFIG?.androidClientId || GOOGLE_CONFIG?.expoClientId,
-    });
-
-
-  useEffect(() => {
-    const completeGoogleSignup = async () => {
-      if (!response) return;
-
-      if (response.type !== 'success') {
-        Alert.alert('Google Sign Up', 'Google authentication was cancelled or failed.');
-        setGoogleLoading(false);
-        return;
-      }
-
-      const idToken = response.params?.id_token;
-      if (!idToken) {
-        Alert.alert('Google Sign Up', 'Could not retrieve Google token. Please try again.');
-        setGoogleLoading(false);
-        return;
-      }
-
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/users/google-auth/mobile/`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: idToken }),
-        });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          Alert.alert('Google Sign Up Failed');
-          return;
-        }
-
-        const { access } = data?.tokens ?? {};
-        const nextUser = data?.user ?? data;
-
-        await AsyncStorage.multiSet([
-          ['authToken', access ?? ''],
-          ['userProfile', JSON.stringify(nextUser)],
-        ]);
-
-        // After Google signup, go to profile setup so the user can complete details
-        navigation.replace('ProfileSetup', { user: nextUser });
-
-      } catch (err) {
-        Alert.alert('Network error', 'Could not reach the server. Please try again.');
-      } finally {
-        setGoogleLoading(false);
-      }
-    };
-
-    completeGoogleSignup();
-  }, [response]);
 
 
   const handleInputChange = (field, value) => {
@@ -202,16 +129,6 @@ const SignUpScreen = ({ navigation }) => {
     }
   };
 
-  const handleGoogleSignUp = () => {
-    if (googleLoading) return;
-    if (!request) {
-      Alert.alert('Google Sign Up', 'Google sign-in is still configuring. Please try again in a moment.');
-      return;
-    }
-    setGoogleLoading(true);
-    promptAsync({ useProxy: true, showInRecents: true });
-  };
-
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bgColor }]}>
@@ -273,22 +190,6 @@ const SignUpScreen = ({ navigation }) => {
             {isLoading ? 'Creating Account...' : 'Sign Up'}
           </Text>
         </TouchableOpacity>
-
-        <View style={styles.dividerContainer}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>or</Text>
-          <View style={styles.dividerLine} />
-        </View>
-
-        <TouchableOpacity
-          style={styles.googleButton}
-          onPress={handleGoogleSignUp}
-          disabled={googleLoading}
-        >
-          <Text style={styles.googleButtonText}>
-            {googleLoading ? 'Connecting with Google...' : 'Continue with Google'}
-          </Text>
-        </TouchableOpacity>
       </View>
 
     </SafeAreaView>
@@ -328,34 +229,6 @@ const styles = StyleSheet.create({
   },
   signUpButtonText: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  dividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 16,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#E0E0E0',
-  },
-  dividerText: {
-    marginHorizontal: 8,
-    color: '#666666',
-    fontSize: 14,
-  },
-  googleButton: {
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  googleButtonText: {
-    color: '#333333',
     fontSize: 16,
     fontWeight: '600',
   },

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -14,16 +14,9 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
-import * as WebBrowser from 'expo-web-browser';
-import * as Google from 'expo-auth-session/providers/google';
-import { makeRedirectUri } from 'expo-auth-session';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://127.0.0.1:8000';
-const GOOGLE_CONFIG = Constants.expoConfig?.extra?.google || {};
-const isExpoGo = Constants.appOwnership === 'expo';
-
-WebBrowser.maybeCompleteAuthSession();
 
 const LoginScreen = ({ navigation }) => {
   const [formData, setFormData] = useState({
@@ -31,82 +24,6 @@ const LoginScreen = ({ navigation }) => {
     password: '',
   });
   const [isLoading, setIsLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
-
-  // Let expo-auth-session choose the correct redirect URI for the Expo Auth proxy.
-  // This should be https://auth.expo.io/@areebach123/MobileApp when running in Expo Go.
-  const [googleRequest, googleResponse, googlePromptAsync] =
-    Google.useIdTokenAuthRequest({
-      expoClientId: GOOGLE_CONFIG?.expoClientId,
-      iosClientId: GOOGLE_CONFIG?.iosClientId || GOOGLE_CONFIG?.expoClientId,
-      androidClientId: GOOGLE_CONFIG?.androidClientId || GOOGLE_CONFIG?.expoClientId,
-    });
-
-  useEffect(() => {
-    const finishGoogleLogin = async () => {
-      if (!googleResponse) return;
-
-      if (googleResponse.type === 'success') {
-        const idToken = googleResponse.params?.id_token;
-        if (!idToken) {
-          Alert.alert('Google Login', 'Could not retrieve Google token. Please try again.');
-          setGoogleLoading(false);
-          return;
-        }
-
-        try {
-          setGoogleLoading(true);
-          const res = await fetch(`${API_BASE_URL}/api/users/google-auth/mobile/`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: idToken }),
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            const message =
-              typeof data === 'object' && data !== null
-                ? Object.values(data)[0]
-                : 'Unable to login with Google.';
-            Alert.alert('Google Login Failed', Array.isArray(message) ? message.join('\n') : message);
-            return;
-          }
-
-          const { access } = data?.tokens ?? {};
-          const nextUser = data?.user ?? {};
-          await AsyncStorage.multiSet([
-            ['authToken', access ?? ''],
-            ['userProfile', JSON.stringify(nextUser)],
-          ]);
-          const firstName = nextUser?.first_name;
-          Alert.alert(
-            'Welcome back!',
-            firstName ? `Hi ${firstName}, you're signed in with Google.` : 'Signed in with Google successfully.',
-            [
-              {
-                text: 'Continue',
-                onPress: () => {
-                  console.log('Google JWT access token:', access);
-                  navigation.navigate('Home', { user: nextUser });
-                },
-              },
-            ]
-          );
-        } catch (error) {
-          Alert.alert(
-            'Network error',
-            'Could not reach the server. Make sure your backend is running and the URL is correct.'
-          );
-        } finally {
-          setGoogleLoading(false);
-        }
-      } else if (googleResponse.type === 'error') {
-        Alert.alert('Google Login', 'Google authentication was cancelled or failed.');
-        setGoogleLoading(false);
-      }
-    };
-
-    finishGoogleLogin();
-  }, [googleResponse, navigation]);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
@@ -198,16 +115,6 @@ const LoginScreen = ({ navigation }) => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleGoogleLogin = () => {
-    if (googleLoading) return;
-    if (!googleRequest) {
-      Alert.alert('Google Login', 'Google sign-in is still configuring. Please try again in a moment.');
-      return;
-    }
-    setGoogleLoading(true);
-    googlePromptAsync({ useProxy: true, showInRecents: true });
   };
 
   const handleBack = () => {
@@ -310,23 +217,6 @@ const LoginScreen = ({ navigation }) => {
                   {isLoading ? 'Signing In...' : 'Sign In'}
                 </Text>
                 {!isLoading && <Feather name="arrow-right" size={20} color="#FFFFFF" style={styles.buttonIcon} />}
-              </TouchableOpacity>
-
-              <View style={styles.dividerContainer}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>or</Text>
-                <View style={styles.dividerLine} />
-              </View>
-
-              <TouchableOpacity
-                style={styles.googleButton}
-        onPress={handleGoogleLogin}
-        disabled={googleLoading}
-              >
-                <Feather name="chrome" size={20} color="#4285F4" style={styles.googleIcon} />
-        <Text style={styles.googleButtonText}>
-          {googleLoading ? 'Connecting...' : 'Continue with Google'}
-        </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -532,45 +422,6 @@ const styles = StyleSheet.create({
   },
   buttonIcon: {
     marginLeft: 4,
-  },
-  dividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 20,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#E9ECEF',
-  },
-  dividerText: {
-    marginHorizontal: 16,
-    color: '#666666',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  googleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E9ECEF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  googleIcon: {
-    marginRight: 12,
-  },
-  googleButtonText: {
-    color: '#333333',
-    fontSize: 16,
-    fontWeight: '600',
   },
   signUpContainer: {
     flexDirection: 'row',

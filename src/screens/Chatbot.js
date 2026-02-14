@@ -228,55 +228,75 @@ export default function Chatbot({ navigation }) {
       });
 
       if (response.ok) {
-        // Handle streaming response
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+        // React Native fetch doesn't expose a readable stream body with getReader().
+        // Read the full SSE payload as text and parse events after the request finishes.
+        const sseText = await response.text();
         let fullText = '';
+        let streamError = null;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        // Normalize line endings (backend may send \n\n; proxies sometimes use \r\n)
+        const normalized = sseText.replace(/\r\n/g, '\n').trim();
+        const blocks = normalized.split(/\n\n+/);
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.type === 'token') {
-                  fullText += data.content;
-                  // Update bot message with streaming tokens
-                  setMessages((prev) =>
-                    prev.map((msg) =>
-                      msg.id === botMessageId
-                        ? { ...msg, text: fullText }
-                        : msg
-                    )
-                  );
-                  // Auto-scroll as message updates
-                  scrollRef.current?.scrollToEnd({ animated: false });
-                }
-              } catch (e) {
-                console.error('Error parsing streaming data:', e);
-              }
+        for (const block of blocks) {
+          const line = block.trim();
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const raw = line.slice(6).trim();
+            const data = JSON.parse(raw);
+            if (data.type === 'token' && data.content != null) {
+              fullText += data.content;
+            } else if (data.type === 'error' && data.content) {
+              streamError = data.content;
             }
+          } catch (e) {
+            console.error('Error parsing SSE block:', e);
           }
         }
 
-        // Ensure final message is displayed
-        if (fullText) {
+        // Use stream error as message if we have no content but got an error event
+        const textToShow = fullText || streamError || '';
+
+        if (textToShow) {
           setMessages((prev) =>
             prev.map((msg) =>
-              msg.id === botMessageId
-                ? { ...msg, text: fullText }
-                : msg
+              msg.id === botMessageId ? { ...msg, text: textToShow } : msg
             )
           );
         } else {
-          // Fallback if no streaming data received
+          // Stream may not be fully received in RN (e.g. chunked response). Fetch latest from history.
+          try {
+            const historyRes = await fetch(
+              `${API_BASE_URL}/api/chatbot/session/${userId}/history/`,
+              {
+                method: 'GET',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                },
+              }
+            );
+            if (historyRes.ok) {
+              const historyData = await historyRes.json();
+              const messages = historyData.messages || [];
+              const lastAssistant = [...messages]
+                .reverse()
+                .find((m) => m.role === 'assistant');
+              if (lastAssistant && lastAssistant.content) {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === botMessageId
+                      ? { ...msg, text: lastAssistant.content }
+                      : msg
+                  )
+                );
+                scrollRef.current?.scrollToEnd({ animated: true });
+                return;
+              }
+            }
+          } catch (historyErr) {
+            console.error('Fallback history fetch failed:', historyErr);
+          }
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === botMessageId
@@ -285,7 +305,7 @@ export default function Chatbot({ navigation }) {
             )
           );
         }
-        
+
         scrollRef.current?.scrollToEnd({ animated: true });
       } else {
         const errorData = await response.json();
