@@ -116,7 +116,7 @@ export default function App() {
     // Listen for notifications received while app is foregrounded
     notificationListener.current = Notifications.addNotificationReceivedListener(async (notification) => {
       const notificationType = notification.request.content.data?.type || 'general';
-      
+
       // Check preferences before saving
       const preferences = await getNotificationPreferences();
       if (preferences) {
@@ -128,12 +128,12 @@ export default function App() {
           'milestone': true,
           'general': true,
         };
-        
+
         if (typeEnabled[notificationType] === false) {
           return; // Don't save if disabled
         }
       }
-      
+
       saveNotificationToStorage({
         id: `received_${Date.now()}_${Math.random()}`,
         type: notificationType,
@@ -147,7 +147,7 @@ export default function App() {
     // Listen for user tapping on notifications
     responseListener.current = Notifications.addNotificationResponseReceivedListener(async (response) => {
       const notificationType = response.notification.request.content.data?.type || 'general';
-      
+
       // Check preferences before saving
       const preferences = await getNotificationPreferences();
       if (preferences) {
@@ -159,12 +159,12 @@ export default function App() {
           'milestone': true,
           'general': true,
         };
-        
+
         if (typeEnabled[notificationType] === false) {
           return; // Don't save if disabled
         }
       }
-      
+
       saveNotificationToStorage({
         id: `tapped_${Date.now()}_${Math.random()}`,
         type: notificationType,
