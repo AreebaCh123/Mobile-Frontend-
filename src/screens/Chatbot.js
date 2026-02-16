@@ -21,7 +21,49 @@ import { ms } from "../themes/scale";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 
+// Optional: in Expo Go the native module is not available; guard so the app doesn't crash
+let ExpoSpeechRecognitionModule = null;
+let useSpeechRecognitionEvent = () => {};
+try {
+  const speech = require("expo-speech-recognition");
+  if (speech?.ExpoSpeechRecognitionModule) {
+    ExpoSpeechRecognitionModule = speech.ExpoSpeechRecognitionModule;
+    useSpeechRecognitionEvent = speech.useSpeechRecognitionEvent;
+  }
+} catch (_) {}
+
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || "http://127.0.0.1:8000";
+const LIBRE_TRANSLATE_URL = "https://libretranslate.com/translate";
+
+// Detect if text contains Arabic/Urdu script (Urdu uses Arabic script)
+function isUrduOrArabicText(text) {
+  if (!text || typeof text !== "string") return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  // Arabic Unicode block (includes Urdu additional chars in the same range)
+  const arabicUrduRegex = /[\u0600-\u06FF]/;
+  return arabicUrduRegex.test(trimmed);
+}
+
+// Translate Urdu (or Arabic) to English via LibreTranslate (free, no API key)
+async function translateUrduToEnglish(text) {
+  const res = await fetch(LIBRE_TRANSLATE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      q: text,
+      source: "ur",
+      target: "en",
+      format: "text",
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(errText || `Translation failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.translatedText ?? text;
+}
 
 export default function Chatbot({ navigation }) {
   const [messages, setMessages] = useState([]);
@@ -34,15 +76,147 @@ export default function Chatbot({ navigation }) {
   const [showHistory, setShowHistory] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [speechAvailable, setSpeechAvailable] = useState(null); // null = not checked yet, true/false after check
   const scrollRef = useRef(null);
 
   const quickReplies = [
     "I'm feeling anxious",
-    "I'm having a tough day", 
+    "I'm having a tough day",
     "I need some support",
     "I'm feeling better",
     "Can you help me relax?",
   ];
+
+  // Speech recognition events (single listener each; cleanup on unmount by hook)
+  useSpeechRecognitionEvent("start", () => setIsListening(true));
+  useSpeechRecognitionEvent("end", () => setIsListening(false));
+
+  useSpeechRecognitionEvent("nomatch", () => setIsListening(false));
+
+  useSpeechRecognitionEvent("result", async (event) => {
+    const results = event?.results ?? [];
+    const transcript = results.length > 0
+      ? results.map((r) => r.transcript ?? "").filter(Boolean).join(" ").trim()
+      : "";
+    if (!transcript) return;
+    setInput(transcript);
+    if (isUrduOrArabicText(transcript)) {
+      setIsTranslating(true);
+      try {
+        const translated = await translateUrduToEnglish(transcript);
+        setInput(translated);
+      } catch (err) {
+        console.error("Translation failed:", err);
+        Alert.alert(
+          "Translation unavailable",
+          "Could not translate to English. You can still send the message as-is or type in English."
+        );
+      } finally {
+        setIsTranslating(false);
+      }
+    }
+  });
+
+  useSpeechRecognitionEvent("error", (event) => {
+    setIsListening(false);
+    const code = event?.error ?? "unknown";
+    const msg = event?.message ?? "";
+    if (code === "aborted") return;
+    const userMessage =
+      code === "not-allowed"
+        ? "Microphone permission is required to use voice input."
+        : code === "no-speech" || code === "speech-timeout"
+          ? "No speech detected. Please try again."
+          : code === "network"
+            ? "Speech recognition needs internet. Check your connection."
+            : code === "language-not-supported"
+              ? "This language is not supported for recognition."
+              : msg || "Voice input failed. Please try again.";
+    Alert.alert("Voice input", userMessage);
+  });
+
+  // Check on mount if speech recognition is available (e.g. not in Expo Go)
+  useEffect(() => {
+    if (!ExpoSpeechRecognitionModule?.isRecognitionAvailable) {
+      setSpeechAvailable(false);
+      return;
+    }
+    let mounted = true;
+    (async () => {
+      try {
+        const available = await ExpoSpeechRecognitionModule.isRecognitionAvailable();
+        if (mounted) setSpeechAvailable(!!available);
+      } catch (_) {
+        if (mounted) setSpeechAvailable(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  // Cleanup: stop recognition on unmount to avoid leaks
+  useEffect(() => {
+    return () => {
+      if (ExpoSpeechRecognitionModule) {
+        try {
+          ExpoSpeechRecognitionModule.stop();
+          ExpoSpeechRecognitionModule.abort();
+        } catch (_) {}
+      }
+    };
+  }, []);
+
+  const handleMicPress = async () => {
+    if (isListening) {
+      try {
+        ExpoSpeechRecognitionModule.stop();
+      } catch (e) {
+        console.warn("Stop recognition:", e);
+      }
+      return;
+    }
+    if (speechAvailable === false || !ExpoSpeechRecognitionModule) {
+      Alert.alert(
+        "Voice input in Expo Go",
+        "Voice input is not available in Expo Go. To test the mic:\n\n• Web: run \"npx expo start --web\" and open in Chrome\n• Device: run \"npx expo run:ios\" or \"npx expo run:android\" to create a development build"
+      );
+      return;
+    }
+    try {
+      const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Microphone access",
+          "Please allow microphone access in Settings to use voice input."
+        );
+        return;
+      }
+      const available = await ExpoSpeechRecognitionModule.isRecognitionAvailable();
+      if (!available) {
+        Alert.alert(
+          "Not available",
+          "Speech recognition is not available on this device."
+        );
+        return;
+      }
+      ExpoSpeechRecognitionModule.start({
+        lang: "ur-PK",
+        interimResults: true,
+        continuous: false,
+      });
+    } catch (err) {
+      console.error("Start recognition:", err);
+      const msg = err?.message ?? "";
+      const isExpoGoOrMissing = /expo go|native module|not found|undefined/i.test(msg);
+      Alert.alert(
+        "Voice input",
+        isExpoGoOrMissing
+          ? "Voice input is not available in Expo Go. To test: run \"npx expo start --web\" (Chrome) or \"npx expo run:ios\" / \"npx expo run:android\" for a development build."
+          : "Could not start speech recognition. Please try again."
+      );
+    }
+  };
 
   // Load user info from AsyncStorage
   useEffect(() => {
@@ -746,8 +920,21 @@ export default function Chatbot({ navigation }) {
           <TouchableOpacity onPress={send} style={styles.sendBtn} hitSlop={10}>
             <Feather name="send" size={18} color={colors.white} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => {}} style={styles.micBtn} hitSlop={10}>
-            <Feather name="mic" size={18} color={colors.accent} />
+          <TouchableOpacity
+            onPress={handleMicPress}
+            style={[styles.micBtn, (isListening || isTranslating) && styles.micBtnActive]}
+            hitSlop={10}
+            disabled={isTranslating}
+          >
+            {isTranslating ? (
+              <ActivityIndicator size="small" color={colors.accent} />
+            ) : (
+              <Feather
+                name="mic"
+                size={18}
+                color={isListening ? colors.white : colors.accent}
+              />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -955,6 +1142,9 @@ const styles = StyleSheet.create({
     borderRadius: ms(18),
     alignItems: "center",
     justifyContent: "center",
+  },
+  micBtnActive: {
+    backgroundColor: colors.accent,
   },
   typingBubble: {
     paddingVertical: 16,

@@ -33,6 +33,7 @@ export default {
       'expo-asset',
       'expo-font',
       'expo-web-browser',
+      'expo-speech-recognition',
       [
         'expo-notifications',
         {
