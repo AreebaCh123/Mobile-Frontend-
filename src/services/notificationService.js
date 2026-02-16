@@ -18,7 +18,7 @@ Notifications.setNotificationHandler({
       time: new Date().toISOString(),
       read: false,
     });
-    
+
     return {
       shouldShowAlert: true,
       shouldPlaySound: true,
@@ -32,22 +32,22 @@ export async function saveNotificationToStorage(notification) {
   try {
     const existing = await AsyncStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
     const notifications = existing ? JSON.parse(existing) : [];
-    
+
     // Check for duplicates (same title and message within last 2 minutes)
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-    const isDuplicate = notifications.some(n => 
+    const isDuplicate = notifications.some(n =>
       n.title === notification.title &&
       n.message === notification.message &&
       n.time > twoMinutesAgo
     );
-    
+
     if (!isDuplicate) {
       // Add new notification at the beginning
       notifications.unshift(notification);
-      
+
       // Keep only last 100 notifications
       const limited = notifications.slice(0, 100);
-      
+
       await AsyncStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(limited));
     }
   } catch (error) {
@@ -79,7 +79,7 @@ export async function clearAllNotifications() {
 export async function markNotificationAsRead(notificationId) {
   try {
     const notifications = await getNotificationsFromStorage();
-    const updated = notifications.map(notif => 
+    const updated = notifications.map(notif =>
       notif.id === notificationId ? { ...notif, read: true } : notif
     );
     await AsyncStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(updated));
@@ -92,17 +92,17 @@ export async function markNotificationAsRead(notificationId) {
 export async function requestNotificationPermissions() {
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   let finalStatus = existingStatus;
-  
+
   if (existingStatus !== 'granted') {
     const { status } = await Notifications.requestPermissionsAsync();
     finalStatus = status;
   }
-  
+
   if (finalStatus !== 'granted') {
     console.log('Notification permissions not granted');
     return false;
   }
-  
+
   return true;
 }
 
@@ -131,7 +131,7 @@ export async function scheduleNotification(title, body, trigger, data = {}) {
         read: false,
       });
     }
-    
+
     const identifier = await Notifications.scheduleNotificationAsync({
       content: {
         title,
@@ -151,29 +151,29 @@ export async function scheduleNotification(title, body, trigger, data = {}) {
 // Schedule task reminders (every 10 minutes if 1 hour left)
 export async function scheduleTaskReminders(tasks, preferences) {
   if (!preferences.task_reminders) return;
-  
+
   const now = new Date();
   const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
-  
+
   for (const task of tasks) {
     if (task.completed) continue;
-    
+
     const dueDate = new Date(task.due_date);
     const dueTime = new Date(dueDate);
     if (task.due_time) {
       const [hours, minutes] = task.due_time.split(':');
       dueTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
     }
-    
+
     // Check if task is due within 1 hour
     const timeUntilDue = dueTime.getTime() - now.getTime();
     if (timeUntilDue > 0 && timeUntilDue <= 60 * 60 * 1000) {
       // Schedule notifications every 10 minutes until due time
       let notificationTime = new Date(now.getTime() + 10 * 60 * 1000); // First in 10 minutes
-      
+
       while (notificationTime <= dueTime) {
         const secondsUntilNotification = Math.floor((notificationTime.getTime() - now.getTime()) / 1000);
-        
+
         if (secondsUntilNotification > 0) {
           await scheduleNotification(
             `Task Reminder: ${task.title}`,
@@ -182,7 +182,7 @@ export async function scheduleTaskReminders(tasks, preferences) {
             { type: 'task', taskId: task.id }
           );
         }
-        
+
         notificationTime = new Date(notificationTime.getTime() + 10 * 60 * 1000); // Every 10 minutes
       }
     }
@@ -192,34 +192,34 @@ export async function scheduleTaskReminders(tasks, preferences) {
 // Schedule medication reminders (every 10 minutes if 1 hour left)
 export async function scheduleMedicationReminders(medications, preferences) {
   if (!preferences.medication_reminders) return;
-  
+
   const now = new Date();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayStr = today.toISOString().split('T')[0];
-  
+
   for (const med of medications) {
     // Check pending intakes for today
     const pendingIntakes = (med.intakes || []).filter(
       intake => !intake.taken && intake.date === todayStr
     );
-    
+
     if (pendingIntakes.length === 0) continue;
-    
+
     // For medications, we'll schedule a reminder if there's a pending intake
     // Since we don't have exact scheduled times, we'll schedule for 1 hour from now
     // and then every 10 minutes after that until end of day
     const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
     const endOfDay = new Date(today);
     endOfDay.setHours(23, 59, 59, 999);
-    
+
     // Schedule first reminder in 1 hour (if within today)
     if (oneHourFromNow <= endOfDay) {
       let notificationTime = oneHourFromNow;
-      
+
       while (notificationTime <= endOfDay) {
         const secondsUntilNotification = Math.floor((notificationTime.getTime() - now.getTime()) / 1000);
-        
+
         if (secondsUntilNotification > 0 && secondsUntilNotification <= 24 * 60 * 60) {
           await scheduleNotification(
             `Medication Reminder: ${med.name}`,
@@ -228,7 +228,7 @@ export async function scheduleMedicationReminders(medications, preferences) {
             { type: 'medication', medicationId: med.id }
           );
         }
-        
+
         notificationTime = new Date(notificationTime.getTime() + 10 * 60 * 1000); // Every 10 minutes
       }
     }
@@ -239,16 +239,16 @@ export async function scheduleMedicationReminders(medications, preferences) {
 export async function scheduleJournalReminder(hasJournalToday, preferences) {
   if (!preferences.journal_reminders) return;
   if (hasJournalToday) return; // Already written today
-  
+
   const now = new Date();
   const midnight = new Date();
   midnight.setHours(24, 0, 0, 0); // Next midnight
-  
+
   // Schedule reminder 30 minutes before midnight (11:30 PM)
   const reminderTime = new Date(midnight.getTime() - 30 * 60 * 1000);
-  
+
   const secondsUntilReminder = Math.floor((reminderTime.getTime() - now.getTime()) / 1000);
-  
+
   if (secondsUntilReminder > 0) {
     await scheduleNotification(
       'Journal Reminder',
@@ -263,16 +263,16 @@ export async function scheduleJournalReminder(hasJournalToday, preferences) {
 export async function scheduleMoodReminder(hasMoodToday, preferences) {
   if (!preferences.mood_reminders) return;
   if (hasMoodToday) return; // Already logged today
-  
+
   const now = new Date();
   const midnight = new Date();
   midnight.setHours(24, 0, 0, 0); // Next midnight
-  
+
   // Schedule reminder 30 minutes before midnight (11:30 PM)
   const reminderTime = new Date(midnight.getTime() - 30 * 60 * 1000);
-  
+
   const secondsUntilReminder = Math.floor((reminderTime.getTime() - now.getTime()) / 1000);
-  
+
   if (secondsUntilReminder > 0) {
     await scheduleNotification(
       'Mood Reminder',
@@ -286,17 +286,17 @@ export async function scheduleMoodReminder(hasMoodToday, preferences) {
 // Add milestone notification (only if not already added today)
 export async function addMilestoneNotification(milestoneData) {
   if (!milestoneData) return;
-  
+
   const existing = await getNotificationsFromStorage();
   const today = new Date().toISOString().split('T')[0];
-  
+
   // Check if milestone notifications were already added today
-  const todayMilestones = existing.filter(n => 
+  const todayMilestones = existing.filter(n =>
     n.type === 'milestone' && n.time?.split('T')[0] === today
   );
-  
+
   const { journaling, mood, tasks } = milestoneData;
-  
+
   // Check for journaling milestone
   if (journaling?.days && journaling.days >= 7 && journaling.milestone) {
     const alreadyAdded = todayMilestones.some(n => n.message?.includes('journaling'));
@@ -311,7 +311,7 @@ export async function addMilestoneNotification(milestoneData) {
       });
     }
   }
-  
+
   // Check for mood milestone
   if (mood?.days && mood.days >= 7 && mood.milestone) {
     const alreadyAdded = todayMilestones.some(n => n.message?.includes('mood tracking'));
@@ -326,7 +326,7 @@ export async function addMilestoneNotification(milestoneData) {
       });
     }
   }
-  
+
   // Check for task milestone
   if (tasks?.days && tasks.days >= 7 && tasks.milestone) {
     const alreadyAdded = todayMilestones.some(n => n.message?.includes('task completion'));
@@ -350,14 +350,14 @@ export async function scheduleAllNotifications(tasks, medications, hasJournalTod
     console.log('Notification permissions not granted');
     return;
   }
-  
+
   await cancelAllNotifications();
-  
+
   await scheduleTaskReminders(tasks, preferences);
   await scheduleMedicationReminders(medications, preferences);
   await scheduleJournalReminder(hasJournalToday, preferences);
   await scheduleMoodReminder(hasMoodToday, preferences);
-  
+
   // Add milestone notifications if any
   if (milestoneData) {
     await addMilestoneNotification(milestoneData);

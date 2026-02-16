@@ -19,6 +19,7 @@ import { ms } from '../themes/scale';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemeContext } from '../context/ThemeContext';
+import chatService from '../services/chatService';
 
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || 'http://127.0.0.1:8000';
 
@@ -29,6 +30,9 @@ export default function TalkToDoctor({ navigation }) {
   const [sending, setSending] = useState(false);
   const [hasTherapist, setHasTherapist] = useState(false);
   const [therapistName, setTherapistName] = useState('');
+  const [patientId, setPatientId] = useState(null);
+  const [doctorId, setDoctorId] = useState(null);
+
   const flatListRef = useRef(null);
   const { isDark } = useContext(ThemeContext);
   const bgColor = isDark ? '#050509' : colors.bg;
@@ -46,7 +50,41 @@ export default function TalkToDoctor({ navigation }) {
         return;
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/journals/chat/messages/`, {
+      // Step 1: Fetch User Profile to get IDs
+      const profileResponse = await fetch(`${API_BASE_URL}/api/users/profile/me/`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!profileResponse.ok) {
+        if (profileResponse.status === 401) {
+          navigation.navigate('Login');
+          return;
+        }
+        throw new Error('Failed to fetch profile');
+      }
+
+      const profileData = await profileResponse.json();
+      const pId = profileData.user?.id;
+      const dId = profileData.therapist?.id;
+
+      if (!dId) {
+        setHasTherapist(false);
+        setMessages([]);
+        setLoading(false);
+        return;
+      }
+
+      setPatientId(pId);
+      setDoctorId(dId);
+      setHasTherapist(true);
+      setTherapistName(profileData.therapist?.full_name || profileData.therapist?.username || 'Your Doctor');
+
+      // Step 2: Fetch Chat History
+      const response = await fetch(`${API_BASE_URL}/api/chat/messages/?doctor_id=${dId}`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -56,28 +94,20 @@ export default function TalkToDoctor({ navigation }) {
 
       if (response.ok) {
         const data = await response.json();
-        if (data.has_therapist) {
-          setHasTherapist(true);
-          setTherapistName(data.therapist_name || 'Your Doctor');
-          setMessages(data.messages || []);
-          // Scroll to bottom after loading
-          setTimeout(() => {
-            if (flatListRef.current && data.messages?.length > 0) {
-              flatListRef.current.scrollToEnd({ animated: false });
-            }
-          }, 100);
-        } else {
-          setHasTherapist(false);
-          setMessages([]);
-        }
-      } else {
-        if (response.status === 401) {
-          navigation.navigate('Login');
-        } else {
-          const errorData = await response.json();
-          if (errorData.error) {
-            Alert.alert('Error', errorData.error);
+        setMessages(data.messages || []);
+        // Scroll to bottom after loading
+        setTimeout(() => {
+          if (flatListRef.current && (data.messages?.length > 0)) {
+            flatListRef.current.scrollToEnd({ animated: false });
           }
+        }, 100);
+
+        // Step 3: Connect to WebSocket
+        chatService.connect(pId, dId, token, API_BASE_URL);
+      } else {
+        const errorData = await response.json();
+        if (errorData.error) {
+          Alert.alert('Error', errorData.error);
         }
       }
     } catch (error) {
@@ -87,6 +117,43 @@ export default function TalkToDoctor({ navigation }) {
       setLoading(false);
     }
   }, [navigation]);
+
+  const [socketStatus, setSocketStatus] = useState('disconnected');
+
+  useEffect(() => {
+    // Listen for connection status changes
+    chatService.onStatusChange((status) => {
+      setSocketStatus(status);
+    });
+
+    // Listen for real-time messages
+    chatService.onMessage((data) => {
+      // Only process actual chat messages
+      if (data.type === 'chat_message') {
+        const newMessage = {
+          ...data,
+          id: data.id || data.message_id, // Map message_id to id if id is missing
+        };
+
+        setMessages((prev) => {
+          // Prevent duplicate messages if WS sends back the one we just sent
+          if (newMessage.id && prev.find(m => m.id === newMessage.id)) return prev;
+          return [...prev, newMessage];
+        });
+
+        // Scroll to bottom on new message
+        setTimeout(() => {
+          if (flatListRef.current) {
+            flatListRef.current.scrollToEnd({ animated: true });
+          }
+        }, 100);
+      }
+    });
+
+    return () => {
+      chatService.disconnect();
+    };
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -100,6 +167,14 @@ export default function TalkToDoctor({ navigation }) {
     const messageToSend = messageText.trim();
     setMessageText('');
 
+    // Try sending via WebSocket first (Real-time)
+    const sentViaWS = chatService.sendMessage(messageToSend);
+    if (sentViaWS) {
+      // WS sending doesn't give immediate ID, but it will come back via onMessage
+      return;
+    }
+
+    // Fallback to REST API
     try {
       setSending(true);
       const token = await AsyncStorage.getItem('authToken');
@@ -108,7 +183,7 @@ export default function TalkToDoctor({ navigation }) {
         return;
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/journals/chat/messages/send/`, {
+      const response = await fetch(`${API_BASE_URL}/api/chat/send/`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -119,7 +194,10 @@ export default function TalkToDoctor({ navigation }) {
 
       if (response.ok) {
         const newMessage = await response.json();
-        setMessages((prev) => [...prev, newMessage]);
+        setMessages((prev) => {
+          if (prev.find(m => m.id === newMessage.id)) return prev;
+          return [...prev, newMessage];
+        });
         // Scroll to bottom after sending
         setTimeout(() => {
           if (flatListRef.current) {
@@ -228,9 +306,25 @@ export default function TalkToDoctor({ navigation }) {
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={[styles.headerTitle, { color: textColor }]}>Talk to Your Doctor</Text>
-          <Text style={[styles.headerSubtitle, { color: textColor, opacity: 0.7 }]}>
-            {therapistName}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: spacing.xs }}>
+            <View
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: socketStatus === 'connected' ? '#4ADE80' :
+                  socketStatus === 'error' ? '#F87171' : '#9CA3AF',
+                marginRight: 6
+              }}
+            />
+            <Text style={[styles.headerSubtitle, { color: textColor, opacity: 0.7, marginTop: 0 }]}>
+              {therapistName} {
+                socketStatus === 'connected' ? '(Real-time: Safe)' :
+                  socketStatus === 'error' ? '(Real-time: Error - Check Server)' :
+                    `(${socketStatus})`
+              }
+            </Text>
+          </View>
         </View>
         <View style={{ width: 22 }} />
       </View>
@@ -240,7 +334,7 @@ export default function TalkToDoctor({ navigation }) {
         ref={flatListRef}
         data={messages}
         renderItem={renderMessage}
-        keyExtractor={(item) => item.id.toString()}
+        keyExtractor={(item, index) => item.id?.toString() || index.toString()}
         contentContainerStyle={styles.messagesList}
         inverted={false}
         onContentSizeChange={() => {

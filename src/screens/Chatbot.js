@@ -14,23 +14,28 @@ import {
   ActivityIndicator,
   Modal,
   FlatList,
+  Animated,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { colors, spacing, radii, type } from "../themes/tokens";
 import { ms } from "../themes/scale";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+import EventSource from "react-native-sse";
 
-// Optional: in Expo Go the native module is not available; guard so the app doesn't crash
+// Gracefully handle missing speech recognition (for Expo Go compatibility)
 let ExpoSpeechRecognitionModule = null;
-let useSpeechRecognitionEvent = () => {};
+let useSpeechRecognitionEvent = () => {}; // No-op hook
+let isSpeechAvailable = false;
+
 try {
-  const speech = require("expo-speech-recognition");
-  if (speech?.ExpoSpeechRecognitionModule) {
-    ExpoSpeechRecognitionModule = speech.ExpoSpeechRecognitionModule;
-    useSpeechRecognitionEvent = speech.useSpeechRecognitionEvent;
-  }
-} catch (_) {}
+  const speechModule = require("expo-speech-recognition");
+  ExpoSpeechRecognitionModule = speechModule.ExpoSpeechRecognitionModule;
+  useSpeechRecognitionEvent = speechModule.useSpeechRecognitionEvent;
+  isSpeechAvailable = true;
+} catch (e) {
+  console.log("Speech recognition not available (running in Expo Go)");
+}
 
 const API_BASE_URL = Constants.expoConfig?.extra?.apiUrl || "http://127.0.0.1:8000";
 const LIBRE_TRANSLATE_URL = "https://libretranslate.com/translate";
@@ -76,10 +81,46 @@ export default function Chatbot({ navigation }) {
   const [showHistory, setShowHistory] = useState(false);
   const [conversationHistory, setConversationHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcript, setTranscript] = useState("");
   const [isTranslating, setIsTranslating] = useState(false);
   const [speechAvailable, setSpeechAvailable] = useState(null); // null = not checked yet, true/false after check
   const scrollRef = useRef(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Animated dots for typing indicator
+  const dot1Anim = useRef(new Animated.Value(0)).current;
+  const dot2Anim = useRef(new Animated.Value(0)).current;
+  const dot3Anim = useRef(new Animated.Value(0)).current;
+
+  // Typing dots animation
+  useEffect(() => {
+    if (isTyping) {
+      const animateDots = () => {
+        Animated.loop(
+          Animated.stagger(150, [
+            Animated.sequence([
+              Animated.timing(dot1Anim, { toValue: 1, duration: 300, useNativeDriver: true }),
+              Animated.timing(dot1Anim, { toValue: 0, duration: 300, useNativeDriver: true }),
+            ]),
+            Animated.sequence([
+              Animated.timing(dot2Anim, { toValue: 1, duration: 300, useNativeDriver: true }),
+              Animated.timing(dot2Anim, { toValue: 0, duration: 300, useNativeDriver: true }),
+            ]),
+            Animated.sequence([
+              Animated.timing(dot3Anim, { toValue: 1, duration: 300, useNativeDriver: true }),
+              Animated.timing(dot3Anim, { toValue: 0, duration: 300, useNativeDriver: true }),
+            ]),
+          ])
+        ).start();
+      };
+      animateDots();
+    } else {
+      dot1Anim.setValue(0);
+      dot2Anim.setValue(0);
+      dot3Anim.setValue(0);
+    }
+  }, [isTyping]);
 
   const quickReplies = [
     "I'm feeling anxious",
@@ -89,30 +130,58 @@ export default function Chatbot({ navigation }) {
     "Can you help me relax?",
   ];
 
-  // Speech recognition events (single listener each; cleanup on unmount by hook)
-  useSpeechRecognitionEvent("start", () => setIsListening(true));
-  useSpeechRecognitionEvent("end", () => setIsListening(false));
+  // Speech recognition event handlers with Urdu support and press-and-hold UX
+  useSpeechRecognitionEvent("start", () => {
+    setIsRecording(true);
+    setTranscript("");
+    // Start pulse animation
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.3,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  });
 
-  useSpeechRecognitionEvent("nomatch", () => setIsListening(false));
+  useSpeechRecognitionEvent("end", () => {
+    setIsRecording(false);
+    pulseAnim.stopAnimation();
+    pulseAnim.setValue(1);
+  });
+
+  useSpeechRecognitionEvent("nomatch", () => {
+    setIsRecording(false);
+    pulseAnim.stopAnimation();
+    pulseAnim.setValue(1);
+  });
 
   useSpeechRecognitionEvent("result", async (event) => {
+    // Get the latest transcript
     const results = event?.results ?? [];
-    const transcript = results.length > 0
+    const latestTranscript = results.length > 0
       ? results.map((r) => r.transcript ?? "").filter(Boolean).join(" ").trim()
       : "";
-    if (!transcript) return;
-    setInput(transcript);
-    if (isUrduOrArabicText(transcript)) {
+    if (!latestTranscript) return;
+    
+    setTranscript(latestTranscript);
+    
+    // Check if Urdu/Arabic and translate if needed
+    if (isUrduOrArabicText(latestTranscript)) {
       setIsTranslating(true);
       try {
-        const translated = await translateUrduToEnglish(transcript);
-        setInput(translated);
+        const translated = await translateUrduToEnglish(latestTranscript);
+        setTranscript(translated);
       } catch (err) {
         console.error("Translation failed:", err);
-        Alert.alert(
-          "Translation unavailable",
-          "Could not translate to English. You can still send the message as-is or type in English."
-        );
+        // Keep original transcript if translation fails
       } finally {
         setIsTranslating(false);
       }
@@ -120,12 +189,16 @@ export default function Chatbot({ navigation }) {
   });
 
   useSpeechRecognitionEvent("error", (event) => {
-    setIsListening(false);
+    setIsRecording(false);
+    pulseAnim.stopAnimation();
+    pulseAnim.setValue(1);
+    
     const code = event?.error ?? "unknown";
     const msg = event?.message ?? "";
     if (code === "aborted") return;
+    
     const userMessage =
-      code === "not-allowed"
+      code === "not-allowed" || code === "permission-denied"
         ? "Microphone permission is required to use voice input."
         : code === "no-speech" || code === "speech-timeout"
           ? "No speech detected. Please try again."
@@ -134,7 +207,10 @@ export default function Chatbot({ navigation }) {
             : code === "language-not-supported"
               ? "This language is not supported for recognition."
               : msg || "Voice input failed. Please try again.";
-    Alert.alert("Voice input", userMessage);
+    
+    if (code !== "no-speech") {
+      Alert.alert("Voice input", userMessage);
+    }
   });
 
   // Check on mount if speech recognition is available (e.g. not in Expo Go)
@@ -167,15 +243,8 @@ export default function Chatbot({ navigation }) {
     };
   }, []);
 
-  const handleMicPress = async () => {
-    if (isListening) {
-      try {
-        ExpoSpeechRecognitionModule.stop();
-      } catch (e) {
-        console.warn("Stop recognition:", e);
-      }
-      return;
-    }
+  // Start voice recording (called on press in)
+  const startVoiceRecording = async () => {
     if (speechAvailable === false || !ExpoSpeechRecognitionModule) {
       Alert.alert(
         "Voice input in Expo Go",
@@ -183,6 +252,7 @@ export default function Chatbot({ navigation }) {
       );
       return;
     }
+    
     try {
       const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
       if (!permission.granted) {
@@ -192,6 +262,7 @@ export default function Chatbot({ navigation }) {
         );
         return;
       }
+      
       const available = await ExpoSpeechRecognitionModule.isRecognitionAvailable();
       if (!available) {
         Alert.alert(
@@ -200,10 +271,11 @@ export default function Chatbot({ navigation }) {
         );
         return;
       }
+      
       ExpoSpeechRecognitionModule.start({
-        lang: "ur-PK",
+        lang: "ur-PK", // Urdu language support
         interimResults: true,
-        continuous: false,
+        continuous: true,
       });
     } catch (err) {
       console.error("Start recognition:", err);
@@ -215,6 +287,169 @@ export default function Chatbot({ navigation }) {
           ? "Voice input is not available in Expo Go. To test: run \"npx expo start --web\" (Chrome) or \"npx expo run:ios\" / \"npx expo run:android\" for a development build."
           : "Could not start speech recognition. Please try again."
       );
+    }
+  };
+
+  // Stop voice recording and send message (called on press out)
+  const stopVoiceRecordingAndSend = async () => {
+    try {
+      ExpoSpeechRecognitionModule.stop();
+
+      // Explicitly reset recording state immediately to ensure UI updates
+      setIsRecording(false);
+      pulseAnim.stopAnimation();
+      pulseAnim.setValue(1);
+
+      // Small delay to ensure we have the final transcript
+      setTimeout(() => {
+        if (transcript.trim()) {
+          // Set the transcript as input and send
+          setInput(transcript.trim());
+          // Trigger send after setting input
+          setTimeout(() => {
+            sendMessageWithText(transcript.trim());
+          }, 100);
+        }
+        setTranscript("");
+      }, 200);
+    } catch (error) {
+      console.error("Error stopping voice recording:", error);
+      setIsRecording(false);
+      pulseAnim.stopAnimation();
+      pulseAnim.setValue(1);
+      setTranscript("");
+    }
+  };
+
+  // Send message with specific text (for voice input)
+  const sendMessageWithText = async (text) => {
+    if (!text || !userId) return;
+
+    // Add user message to UI immediately
+    const userMessage = {
+      id: Date.now().toString(),
+      author: "me",
+      name: "You",
+      text: text,
+    };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+    setIsTyping(true);
+    scrollRef.current?.scrollToEnd({ animated: true });
+
+    // Create bot message placeholder for streaming
+    const botMessageId = (Date.now() + 1).toString();
+    const botMessage = {
+      id: botMessageId,
+      author: "bot",
+      name: "Nia",
+      text: "",
+    };
+    setMessages((prev) => [...prev, botMessage]);
+
+    try {
+      const token = await AsyncStorage.getItem("authToken");
+      if (!token) {
+        throw new Error("No authentication token found");
+      }
+
+      // Use EventSource for proper SSE streaming
+      const es = new EventSource(`${API_BASE_URL}/api/chatbot/message/`, {
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream",
+          Authorization: `Bearer ${token}`,
+        },
+        method: "POST",
+        body: JSON.stringify({
+          message: text,
+          user_name: userName,
+        }),
+        pollingInterval: 0, // Disable polling, use true streaming
+      });
+
+      const listener = (event) => {
+        if (event.type === "open") {
+          console.log("SSE connection opened");
+        } else if (event.type === "message") {
+          try {
+            const data = JSON.parse(event.data);
+
+            if (data.type === "token") {
+              // Append token to bot message
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: msg.text + data.content }
+                    : msg
+                )
+              );
+              scrollRef.current?.scrollToEnd({ animated: false });
+            } else if (data.type === "done") {
+              console.log("Streaming complete");
+              es.close();
+              setIsTyping(false);
+            } else if (data.type === "error") {
+              console.error("Stream error:", data.content);
+              es.close();
+              setIsTyping(false);
+              // Update with error message
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: "I'm sorry, I encountered an error. Please try again." }
+                    : msg
+                )
+              );
+            }
+          } catch (e) {
+            console.error("Error parsing SSE data:", e);
+          }
+        } else if (event.type === "error") {
+          console.error("SSE connection error:", event.message);
+          es.close();
+          setIsTyping(false);
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMessageId
+                ? { ...msg, text: "I'm sorry, I'm having trouble connecting right now. Please try again." }
+                : msg
+            )
+          );
+        } else if (event.type === "exception") {
+          console.error("SSE exception:", event.message, event.error);
+          es.close();
+          setIsTyping(false);
+        }
+      };
+
+      es.addEventListener("open", listener);
+      es.addEventListener("message", listener);
+      es.addEventListener("error", listener);
+
+      // Clean up on unmount
+      return () => {
+        es.removeAllEventListeners();
+        es.close();
+      };
+    } catch (error) {
+      console.error("Error sending message:", error);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMessageId
+            ? {
+              ...msg,
+              text: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment.",
+            }
+            : msg
+        )
+      );
+      Alert.alert(
+        "Connection Error",
+        "Could not send your message. Please check your internet connection and try again."
+      );
+    } finally {
+      setIsTyping(false);
     }
   };
 
@@ -245,10 +480,10 @@ export default function Chatbot({ navigation }) {
   const initializeChat = async () => {
     try {
       setIsLoading(true);
-      
+
       // Load conversation history first
       await loadConversationHistory();
-      
+
       // Start new conversation if no history exists
       if (messages.length === 0) {
         await startConversation();
@@ -290,7 +525,7 @@ export default function Chatbot({ navigation }) {
           }));
           setMessages(formattedMessages);
           setConversationStarted(true);
-          
+
           // Scroll to bottom after loading
           setTimeout(() => {
             scrollRef.current?.scrollToEnd({ animated: true });
@@ -332,7 +567,7 @@ export default function Chatbot({ navigation }) {
         };
         setMessages([greetingMessage]);
         setConversationStarted(true);
-        
+
         setTimeout(() => {
           scrollRef.current?.scrollToEnd({ animated: true });
         }, 100);
@@ -389,112 +624,93 @@ export default function Chatbot({ navigation }) {
         throw new Error("No authentication token found");
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/chatbot/message/`, {
-        method: "POST",
+      // Use EventSource for proper SSE streaming
+      const es = new EventSource(`${API_BASE_URL}/api/chatbot/message/`, {
         headers: {
           "Content-Type": "application/json",
+          "Accept": "text/event-stream",
           Authorization: `Bearer ${token}`,
         },
+        method: "POST",
         body: JSON.stringify({
           message: trimmed,
           user_name: userName,
         }),
+        pollingInterval: 0, // Disable polling, use true streaming
       });
 
-      if (response.ok) {
-        // React Native fetch doesn't expose a readable stream body with getReader().
-        // Read the full SSE payload as text and parse events after the request finishes.
-        const sseText = await response.text();
-        let fullText = '';
-        let streamError = null;
-
-        // Normalize line endings (backend may send \n\n; proxies sometimes use \r\n)
-        const normalized = sseText.replace(/\r\n/g, '\n').trim();
-        const blocks = normalized.split(/\n\n+/);
-
-        for (const block of blocks) {
-          const line = block.trim();
-          if (!line.startsWith('data: ')) continue;
+      const listener = (event) => {
+        if (event.type === "open") {
+          console.log("SSE connection opened");
+        } else if (event.type === "message") {
           try {
-            const raw = line.slice(6).trim();
-            const data = JSON.parse(raw);
-            if (data.type === 'token' && data.content != null) {
-              fullText += data.content;
-            } else if (data.type === 'error' && data.content) {
-              streamError = data.content;
+            const data = JSON.parse(event.data);
+
+            if (data.type === "token") {
+              // Append token to bot message
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: msg.text + data.content }
+                    : msg
+                )
+              );
+              scrollRef.current?.scrollToEnd({ animated: false });
+            } else if (data.type === "done") {
+              console.log("Streaming complete");
+              es.close();
+              setIsTyping(false);
+            } else if (data.type === "error") {
+              console.error("Stream error:", data.content);
+              es.close();
+              setIsTyping(false);
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: "I'm sorry, I encountered an error. Please try again." }
+                    : msg
+                )
+              );
             }
           } catch (e) {
-            console.error('Error parsing SSE block:', e);
+            console.error("Error parsing SSE data:", e);
           }
-        }
-
-        // Use stream error as message if we have no content but got an error event
-        const textToShow = fullText || streamError || '';
-
-        if (textToShow) {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === botMessageId ? { ...msg, text: textToShow } : msg
-            )
-          );
-        } else {
-          // Stream may not be fully received in RN (e.g. chunked response). Fetch latest from history.
-          try {
-            const historyRes = await fetch(
-              `${API_BASE_URL}/api/chatbot/session/${userId}/history/`,
-              {
-                method: 'GET',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${token}`,
-                },
-              }
-            );
-            if (historyRes.ok) {
-              const historyData = await historyRes.json();
-              const messages = historyData.messages || [];
-              const lastAssistant = [...messages]
-                .reverse()
-                .find((m) => m.role === 'assistant');
-              if (lastAssistant && lastAssistant.content) {
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === botMessageId
-                      ? { ...msg, text: lastAssistant.content }
-                      : msg
-                  )
-                );
-                scrollRef.current?.scrollToEnd({ animated: true });
-                return;
-              }
-            }
-          } catch (historyErr) {
-            console.error('Fallback history fetch failed:', historyErr);
-          }
+        } else if (event.type === "error") {
+          console.error("SSE connection error:", event.message);
+          es.close();
+          setIsTyping(false);
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === botMessageId
-                ? { ...msg, text: "I'm here to listen. Can you tell me more?" }
+                ? { ...msg, text: "I'm sorry, I'm having trouble connecting right now. Please try again." }
                 : msg
             )
           );
+        } else if (event.type === "exception") {
+          console.error("SSE exception:", event.message, event.error);
+          es.close();
+          setIsTyping(false);
         }
+      };
 
-        scrollRef.current?.scrollToEnd({ animated: true });
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to get response");
-      }
+      es.addEventListener("open", listener);
+      es.addEventListener("message", listener);
+      es.addEventListener("error", listener);
+
+      // Clean up on unmount
+      return () => {
+        es.removeAllEventListeners();
+        es.close();
+      };
     } catch (error) {
       console.error("Error sending message:", error);
-      // Update bot message with error
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === botMessageId
             ? {
-                ...msg,
-                text: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment.",
-              }
+              ...msg,
+              text: "I'm sorry, I'm having trouble connecting right now. Please try again in a moment.",
+            }
             : msg
         )
       );
@@ -518,7 +734,7 @@ export default function Chatbot({ navigation }) {
       console.log("No userId available for fetching history");
       return;
     }
-    
+
     try {
       setLoadingHistory(true);
       const token = await AsyncStorage.getItem("authToken");
@@ -549,7 +765,7 @@ export default function Chatbot({ navigation }) {
       if (response.ok) {
         const data = await response.json();
         console.log("History data received:", data);
-        
+
         if (data.messages && data.messages.length > 0) {
           // Group messages into conversations by date
           const groupedConversations = groupMessagesByDate(data.messages);
@@ -577,7 +793,7 @@ export default function Chatbot({ navigation }) {
         userId: userId,
         apiUrl: API_BASE_URL,
       });
-      
+
       // Handle different error cases
       if (error.message.includes("404") || error.message.includes("not found")) {
         // No history found - this is okay, just show empty state
@@ -585,14 +801,14 @@ export default function Chatbot({ navigation }) {
       } else if (error.message.includes("401") || error.message.includes("Authentication")) {
         // Authentication error
         Alert.alert(
-          "Authentication Error", 
+          "Authentication Error",
           "Please log in again to view your chat history."
         );
         setConversationHistory([]);
       } else if (error.message.includes("Network error") || error.message.includes("fetch")) {
         // Network error
         Alert.alert(
-          "Connection Error", 
+          "Connection Error",
           "Could not connect to the server. Please check your internet connection and try again."
         );
         setConversationHistory([]);
@@ -603,7 +819,7 @@ export default function Chatbot({ navigation }) {
         // Only show alert for critical errors
         if (!error.message.includes("empty") && !error.message.includes("No messages")) {
           Alert.alert(
-            "Error", 
+            "Error",
             `Could not load chat history: ${error.message || "Please try again later."}`
           );
         }
@@ -620,22 +836,22 @@ export default function Chatbot({ navigation }) {
     today.setHours(0, 0, 0, 0);
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
-    
+
     const groupedByDay = {
       today: [],
       yesterday: [],
       earlier: {},
     };
-    
+
     // Sort messages by date (oldest first)
-    const sortedMessages = [...messages].sort((a, b) => 
+    const sortedMessages = [...messages].sort((a, b) =>
       new Date(a.created_at) - new Date(b.created_at)
     );
-    
+
     sortedMessages.forEach((msg) => {
       const messageDate = new Date(msg.created_at);
       messageDate.setHours(0, 0, 0, 0);
-      
+
       if (messageDate.getTime() === today.getTime()) {
         groupedByDay.today.push(msg);
       } else if (messageDate.getTime() === yesterday.getTime()) {
@@ -649,10 +865,10 @@ export default function Chatbot({ navigation }) {
         groupedByDay.earlier[dateKey].push(msg);
       }
     });
-    
+
     // Build result with day sections - each day is ONE conversation
     const result = [];
-    
+
     // Today - all messages from today as one conversation
     if (groupedByDay.today.length > 0) {
       result.push({
@@ -667,7 +883,7 @@ export default function Chatbot({ navigation }) {
         }],
       });
     }
-    
+
     // Yesterday - all messages from yesterday as one conversation
     if (groupedByDay.yesterday.length > 0) {
       result.push({
@@ -682,20 +898,20 @@ export default function Chatbot({ navigation }) {
         }],
       });
     }
-    
+
     // Earlier - each date is one conversation
     const sortedEarlierDates = Object.keys(groupedByDay.earlier).sort().reverse();
-    
+
     sortedEarlierDates.forEach((dateKey) => {
       const date = new Date(dateKey);
       const dayMessages = groupedByDay.earlier[dateKey];
-      
+
       result.push({
         type: 'section',
-        label: date.toLocaleDateString("en-US", { 
-          month: "long", 
-          day: "numeric", 
-          year: date.getFullYear() !== today.getFullYear() ? "numeric" : undefined 
+        label: date.toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: date.getFullYear() !== today.getFullYear() ? "numeric" : undefined
         }),
         date: date,
         conversations: [{
@@ -706,7 +922,7 @@ export default function Chatbot({ navigation }) {
         }],
       });
     });
-    
+
     return result;
   };
 
@@ -714,7 +930,7 @@ export default function Chatbot({ navigation }) {
     // Get first user message and first bot response
     const userMessage = messages.find(m => m.role === "user");
     const botMessage = messages.find(m => m.role === "assistant");
-    
+
     if (userMessage && botMessage) {
       return {
         user: userMessage.content.substring(0, 50) + (userMessage.content.length > 50 ? "..." : ""),
@@ -741,7 +957,7 @@ export default function Chatbot({ navigation }) {
     setMessages(formattedMessages);
     setConversationStarted(true);
     setShowHistory(false);
-    
+
     // Scroll to bottom
     setTimeout(() => {
       scrollRef.current?.scrollToEnd({ animated: true });
@@ -754,7 +970,7 @@ export default function Chatbot({ navigation }) {
     setInput("");
     setConversationStarted(false);
     setShowHistory(false);
-    
+
     // Start a new conversation
     await startConversation();
   };
@@ -763,7 +979,7 @@ export default function Chatbot({ navigation }) {
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
-    
+
     if (date.toDateString() === today.toDateString()) {
       return "Today";
     } else if (date.toDateString() === yesterday.toDateString()) {
@@ -803,7 +1019,7 @@ export default function Chatbot({ navigation }) {
           <TouchableOpacity onPress={handleOpenHistory} hitSlop={10} style={styles.historyButton}>
             <Feather name="clock" size={18} color={colors.white} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => {}} hitSlop={10} style={styles.calendarButton}>
+          <TouchableOpacity onPress={() => { }} hitSlop={10} style={styles.calendarButton}>
             <Feather name="calendar" size={18} color={colors.white} />
           </TouchableOpacity>
         </View>
@@ -811,8 +1027,8 @@ export default function Chatbot({ navigation }) {
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={ms(10)}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? ms(10) : 0}
       >
         <ScrollView
           ref={scrollRef}
@@ -824,26 +1040,21 @@ export default function Chatbot({ navigation }) {
             const mine = m.author === "me";
             return (
               <View key={m.id} style={{ marginBottom: spacing.lg }}>
-                {/* Name above bubble */}
-                <Text
-                  style={[
-                    styles.name,
-                    { textAlign: mine ? "right" : "left", color: colors.accent },
-                  ]}
-                >
-                  {m.name}
-                </Text>
-
                 <View
                   style={[
                     styles.row,
                     { justifyContent: mine ? "flex-end" : "flex-start" },
                   ]}
                 >
-                  {/* Avatar circle (icon) */}
+                  {/* Bot avatar with name above */}
                   {!mine && (
-                    <View style={[styles.avatar, { marginRight: spacing.sm }]}>
-                      <Feather name="user" size={16} color={colors.text} />
+                    <View style={styles.avatarContainer}>
+                      <Text style={[styles.name, { color: colors.accent }]}>
+                        {m.name}
+                      </Text>
+                      <View style={[styles.avatar, { marginRight: spacing.sm }]}>
+                        <Feather name="user" size={16} color={colors.text} />
+                      </View>
                     </View>
                   )}
 
@@ -858,31 +1069,39 @@ export default function Chatbot({ navigation }) {
                     </Text>
                   </View>
 
+                  {/* User avatar with name above */}
                   {mine && (
-                    <View style={[styles.avatar, { marginLeft: spacing.sm }]}>
-                      <Feather name="user" size={16} color={colors.text} />
+                    <View style={styles.avatarContainer}>
+                      <Text style={[styles.name, { color: colors.accent, textAlign: "center" }]}>
+                        {m.name}
+                      </Text>
+                      <View style={[styles.avatar, { marginLeft: spacing.sm }]}>
+                        <Feather name="user" size={16} color={colors.text} />
+                      </View>
                     </View>
                   )}
                 </View>
               </View>
             );
           })}
-          
+
           {/* Typing Indicator */}
           {isTyping && (
             <View style={{ marginBottom: spacing.lg }}>
-              <Text style={[styles.name, { textAlign: "left", color: colors.accent }]}>
-                Nia
-              </Text>
               <View style={[styles.row, { justifyContent: "flex-start" }]}>
-                <View style={[styles.avatar, { marginRight: spacing.sm }]}>
-                  <Feather name="user" size={16} color={colors.text} />
+                <View style={styles.avatarContainer}>
+                  <Text style={[styles.name, { color: colors.accent }]}>
+                    Nia
+                  </Text>
+                  <View style={[styles.avatar, { marginRight: spacing.sm }]}>
+                    <Feather name="user" size={16} color={colors.text} />
+                  </View>
                 </View>
                 <View style={[styles.bubble, styles.botBubble, styles.typingBubble]}>
                   <View style={styles.typingDots}>
-                    <View style={[styles.typingDot, styles.typingDot1]} />
-                    <View style={[styles.typingDot, styles.typingDot2]} />
-                    <View style={[styles.typingDot, styles.typingDot3]} />
+                    <Animated.View style={[styles.typingDot, { transform: [{ scale: dot1Anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.4] }) }] }]} />
+                    <Animated.View style={[styles.typingDot, { transform: [{ scale: dot2Anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.4] }) }] }]} />
+                    <Animated.View style={[styles.typingDot, { transform: [{ scale: dot3Anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.4] }) }] }]} />
                   </View>
                 </View>
               </View>
@@ -909,33 +1128,59 @@ export default function Chatbot({ navigation }) {
 
         {/* Composer */}
         <View style={styles.composer}>
+          {/* Recording indicator overlay */}
+          {isRecording && (
+            <View style={styles.recordingOverlay}>
+              <View style={styles.recordingIndicator}>
+                <View style={styles.recordingDot} />
+                <Text style={styles.recordingText}>
+                  {transcript || "Listening..."}
+                </Text>
+              </View>
+            </View>
+          )}
+
           <TextInput
             style={styles.input}
-            placeholder="Type a message..."
+            placeholder={isRecording ? "Listening..." : "Type a message..."}
             placeholderTextColor={colors.accent}
-            value={input}
+            value={isRecording ? transcript : input}
             onChangeText={setInput}
             multiline
+            editable={!isRecording && !isTranslating}
           />
           <TouchableOpacity onPress={send} style={styles.sendBtn} hitSlop={10}>
             <Feather name="send" size={18} color={colors.white} />
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={handleMicPress}
-            style={[styles.micBtn, (isListening || isTranslating) && styles.micBtnActive]}
-            hitSlop={10}
-            disabled={isTranslating}
-          >
-            {isTranslating ? (
-              <ActivityIndicator size="small" color={colors.accent} />
-            ) : (
-              <Feather
-                name="mic"
-                size={18}
-                color={isListening ? colors.white : colors.accent}
-              />
-            )}
-          </TouchableOpacity>
+
+          {/* Voice input button with press-and-hold - only show if speech is available */}
+          {isSpeechAvailable && (
+            <Animated.View
+              style={[
+                styles.micBtn,
+                (isRecording || isTranslating) && styles.micBtnRecording,
+                { transform: [{ scale: pulseAnim }] },
+              ]}
+            >
+              <TouchableOpacity
+                onPressIn={startVoiceRecording}
+                onPressOut={stopVoiceRecordingAndSend}
+                style={styles.micBtnInner}
+                hitSlop={10}
+                disabled={isTranslating}
+              >
+                {isTranslating ? (
+                  <ActivityIndicator size="small" color={colors.accent} />
+                ) : (
+                  <Feather
+                    name="mic"
+                    size={18}
+                    color={isRecording ? colors.white : colors.accent}
+                  />
+                )}
+              </TouchableOpacity>
+            </Animated.View>
+          )}
         </View>
       </KeyboardAvoidingView>
 
@@ -952,9 +1197,9 @@ export default function Chatbot({ navigation }) {
               <Text style={styles.historyTitle}>Chat History</Text>
             </View>
             <View style={styles.historyHeaderRight}>
-              <TouchableOpacity 
-                onPress={handleNewChat} 
-                hitSlop={10} 
+              <TouchableOpacity
+                onPress={handleNewChat}
+                hitSlop={10}
                 style={styles.newChatButton}
               >
                 <Feather name="plus" size={18} color={colors.white} />
@@ -994,7 +1239,7 @@ export default function Chatbot({ navigation }) {
                     </View>
                   );
                 }
-                
+
                 return (
                   <TouchableOpacity
                     style={styles.historyItem}
@@ -1095,6 +1340,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFE7ED",
     alignItems: "center",
     justifyContent: "center",
+  },
+  avatarContainer: {
+    alignItems: "center",
+    justifyContent: "flex-end",
   },
 
   bubble: {
@@ -1344,5 +1593,47 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     fontSize: 12,
     letterSpacing: 0.5,
+  },
+  // Voice recording styles
+  micBtnRecording: {
+    backgroundColor: colors.accent,
+  },
+  micBtnInner: {
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  recordingOverlay: {
+    position: "absolute",
+    top: -60,
+    left: spacing.xl,
+    right: spacing.xl,
+    zIndex: 10,
+  },
+  recordingIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(139, 92, 246, 0.95)",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radii.lg,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  recordingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#FF4444",
+    marginRight: spacing.sm,
+  },
+  recordingText: {
+    ...type.body,
+    color: colors.white,
+    flex: 1,
   },
 });

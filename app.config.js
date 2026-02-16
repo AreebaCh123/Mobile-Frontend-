@@ -5,6 +5,7 @@ export default {
     name: 'MobileApp',
     slug: 'MobileApp',
     version: '1.0.0',
+    scheme: 'mindmate',
     orientation: 'portrait',
     icon: './assets/icon.png',
     userInterfaceStyle: 'light',
@@ -25,6 +26,7 @@ export default {
         backgroundColor: '#ffffff',
       },
       edgeToEdgeEnabled: true,
+      usesCleartextTraffic: true,
     },
     web: {
       favicon: './assets/favicon.png',
@@ -33,13 +35,19 @@ export default {
       'expo-asset',
       'expo-font',
       'expo-web-browser',
-      'expo-speech-recognition',
       [
         'expo-notifications',
         {
           icon: './assets/icon.png',
           color: '#ffffff',
           sounds: [],
+        },
+      ],
+      [
+        'expo-speech-recognition',
+        {
+          microphonePermission: 'Allow MindMate to use the microphone for voice messages',
+          speechRecognitionPermission: 'Allow MindMate to use speech recognition for voice messages',
         },
       ],
     ],
@@ -51,7 +59,7 @@ export default {
         androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
       },
       eas: {
-        projectId: '09140dcf-7ba4-4062-b8b8-cc0524e4b5bb',
+        projectId: 'ad806ab7-46b8-41cb-b3ef-0ea353b9f4b5',
       },
     },
   },

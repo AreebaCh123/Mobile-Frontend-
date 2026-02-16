@@ -186,7 +186,7 @@ export default function Home({ navigation, route }) {
             });
             const journalData = journalRes.ok ? await journalRes.json() : { entries: [] };
             const today = new Date().toISOString().split('T')[0];
-            const hasJournalToday = (journalData.entries || []).some(entry => 
+            const hasJournalToday = (journalData.entries || []).some(entry =>
               entry.created_at?.split('T')[0] === today
             );
 
@@ -196,7 +196,7 @@ export default function Home({ navigation, route }) {
               headers: { Authorization: `Bearer ${token}` },
             });
             const moodData = moodRes.ok ? await moodRes.json() : { mood_logs: [] };
-            const hasMoodToday = (moodData.mood_logs || []).some(log => 
+            const hasMoodToday = (moodData.mood_logs || []).some(log =>
               log.date === today
             );
 
@@ -303,8 +303,8 @@ export default function Home({ navigation, route }) {
       user?.first_name?.trim()
         ? user.first_name
         : user?.username?.trim()
-        ? user.username
-        : 'Friend',
+          ? user.username
+          : 'Friend',
     [user]
   );
 
@@ -325,16 +325,16 @@ export default function Home({ navigation, route }) {
     if (!milestoneData?.latest_milestone) {
       return null;
     }
-    
+
     const category = milestoneData.latest_category;
     const milestone = milestoneData.latest_milestone;
-    
+
     const categoryLabels = {
       'journaling': 'Journaling',
       'mood': 'Mood Tracking',
       'tasks': 'Task Completion',
     };
-    
+
     return {
       category: categoryLabels[category] || category,
       message: milestone.message,
@@ -354,8 +354,8 @@ export default function Home({ navigation, route }) {
 
         <View style={{ flex: 1 }} />
 
-        <TouchableOpacity 
-          onPress={() => navigation.navigate('Notification')} 
+        <TouchableOpacity
+          onPress={() => navigation.navigate('Notification')}
           hitSlop={10}
           style={{ marginRight: spacing.md }}
         >
@@ -633,9 +633,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  greetingText: { 
-    ...type.h1, 
-    color: colors.text, 
+  greetingText: {
+    ...type.h1,
+    color: colors.text,
     marginBottom: spacing.xs,
     fontWeight: '700',
   },
@@ -658,8 +658,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginRight: spacing.sm,
   },
-  quote: { 
-    ...type.caption, 
+  quote: {
+    ...type.caption,
     color: colors.text,
     flex: 1,
     fontStyle: 'italic',
@@ -702,8 +702,8 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  pillText: { 
-    color: colors.white, 
+  pillText: {
+    color: colors.white,
     fontWeight: '600',
     fontSize: 13,
   },
@@ -792,8 +792,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#2D5A27',
   },
-  pillSecondaryText: { 
-    color: '#FFFFFF', 
+  pillSecondaryText: {
+    color: '#FFFFFF',
     fontWeight: '600',
     fontSize: 13,
   },

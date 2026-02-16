@@ -129,15 +129,15 @@ export default function Settings({ navigation }) {
         setMedicationReminders(preferencesToSave.medication_reminders ?? true);
         setJournalReminders(preferencesToSave.journal_reminders ?? true);
         setMoodReminders(preferencesToSave.mood_reminders ?? true);
-        
+
         // Cancel all scheduled notifications and reschedule based on new preferences
         const { cancelAllNotifications, scheduleAllNotifications } = require('../services/notificationService');
         await cancelAllNotifications();
-        
+
         // Reschedule notifications with new preferences
         try {
           const today = new Date().toISOString().split('T')[0];
-          
+
           // Get tasks
           const tasksRes = await fetch(`${API_BASE_URL}/api/journals/tasks/?filter=today`, {
             headers: { Authorization: `Bearer ${token}` },
@@ -159,7 +159,7 @@ export default function Settings({ navigation }) {
             headers: { Authorization: `Bearer ${token}` },
           });
           const journalData = journalRes.ok ? await journalRes.json() : { entries: [] };
-          const hasJournalToday = (journalData.entries || []).some(entry => 
+          const hasJournalToday = (journalData.entries || []).some(entry =>
             entry.created_at?.split('T')[0] === today
           );
 
@@ -168,7 +168,7 @@ export default function Settings({ navigation }) {
             headers: { Authorization: `Bearer ${token}` },
           });
           const moodData = moodRes.ok ? await moodRes.json() : { mood_logs: [] };
-          const hasMoodToday = (moodData.mood_logs || []).some(log => 
+          const hasMoodToday = (moodData.mood_logs || []).some(log =>
             log.date === today
           );
 

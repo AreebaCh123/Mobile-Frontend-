@@ -129,10 +129,29 @@ const SignUpScreen = ({ navigation }) => {
     }
   };
 
+  const handleBack = () => {
+    navigation.goBack();
+  };
+
+  const handleLogin = () => {
+    navigation.navigate('Login');
+  };
+
+  const [genderModalVisible, setGenderModalVisible] = useState(false);
+  const genderOptions = ['Male', 'Female', 'Other'];
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bgColor }]}>
-      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} backgroundColor={headerBg} />
+
+      {/* Header */}
+      <View style={[styles.header, { backgroundColor: headerBg }]}>
+        <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+          <Text style={[styles.backIcon, { color: headerText }]}>←</Text>
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: headerText }]}>Sign Up</Text>
+        <View style={styles.headerSpacer} />
+      </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.formContainer}>
@@ -164,11 +183,38 @@ const SignUpScreen = ({ navigation }) => {
             secureTextEntry
           />
 
-          <FormInput
-            value={formData.gender}
-            onChangeText={(value) => handleInputChange('gender', value)}
-            placeholder="Gender"
-          />
+          {/* Gender Selection */}
+          <View style={styles.inputContainer}>
+            <TouchableOpacity
+              style={[styles.textInput, { justifyContent: 'center' }]}
+              onPress={() => setGenderModalVisible(!genderModalVisible)}
+            >
+              <Text style={{
+                color: formData.gender ? '#000000' : '#999999',
+                fontSize: 16
+              }}>
+                {formData.gender || "Gender"}
+              </Text>
+              <Text style={{ position: 'absolute', right: 15, color: '#999999' }}>▼</Text>
+            </TouchableOpacity>
+
+            {genderModalVisible && (
+              <View style={styles.dropdownList}>
+                {genderOptions.map((option) => (
+                  <TouchableOpacity
+                    key={option}
+                    style={styles.dropdownItem}
+                    onPress={() => {
+                      handleInputChange('gender', option);
+                      setGenderModalVisible(false);
+                    }}
+                  >
+                    <Text style={styles.dropdownText}>{option}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
 
           <FormInput
             value={formData.reason}
@@ -196,9 +242,34 @@ const SignUpScreen = ({ navigation }) => {
   );
 };
 
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  backIcon: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  headerSpacer: {
+    width: 40,
+  },
   scrollView: { flex: 1 },
   formContainer: { padding: 20 },
   inputContainer: { marginBottom: 16 },
@@ -214,6 +285,23 @@ const styles = StyleSheet.create({
   multilineInput: {
     height: 100,
     textAlignVertical: 'top',
+  },
+  dropdownList: {
+    marginTop: 5,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  dropdownItem: {
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  dropdownText: {
+    fontSize: 16,
+    color: '#333',
   },
   buttonContainer: {
     padding: 20,
