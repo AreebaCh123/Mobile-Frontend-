@@ -21,7 +21,6 @@ import { colors, spacing, radii, type } from "../themes/tokens";
 import { ms } from "../themes/scale";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
-import EventSource from "react-native-sse";
 
 // Gracefully handle missing speech recognition (for Expo Go compatibility)
 let ExpoSpeechRecognitionModule = null;
@@ -353,85 +352,95 @@ export default function Chatbot({ navigation }) {
         throw new Error("No authentication token found");
       }
 
-      // Use EventSource for proper SSE streaming
-      const es = new EventSource(`${API_BASE_URL}/api/chatbot/message/`, {
+      // Use fetch for SSE streaming (avoids Accept header issues with DRF)
+      const response = await fetch(`${API_BASE_URL}/api/chatbot/message/`, {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Accept": "text/event-stream",
           Authorization: `Bearer ${token}`,
         },
-        method: "POST",
         body: JSON.stringify({
           message: text,
           user_name: userName,
         }),
-        pollingInterval: 0, // Disable polling, use true streaming
       });
 
-      const listener = (event) => {
-        if (event.type === "open") {
-          console.log("SSE connection opened");
-        } else if (event.type === "message") {
-          try {
-            const data = JSON.parse(event.data);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
 
-            if (data.type === "token") {
-              // Append token to bot message
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === botMessageId
-                    ? { ...msg, text: msg.text + data.content }
-                    : msg
-                )
-              );
-              scrollRef.current?.scrollToEnd({ animated: false });
-            } else if (data.type === "done") {
-              console.log("Streaming complete");
-              es.close();
-              setIsTyping(false);
-            } else if (data.type === "error") {
-              console.error("Stream error:", data.content);
-              es.close();
-              setIsTyping(false);
-              // Update with error message
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === botMessageId
-                    ? { ...msg, text: "I'm sorry, I encountered an error. Please try again." }
-                    : msg
-                )
-              );
-            }
-          } catch (e) {
-            console.error("Error parsing SSE data:", e);
+      // Parse SSE response text
+      const sseText = await response.text();
+      let fullText = '';
+
+      const normalized = sseText.replace(/\r\n/g, '\n').trim();
+      const blocks = normalized.split(/\n\n+/);
+
+      for (const block of blocks) {
+        const line = block.trim();
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const raw = line.slice(6).trim();
+          const data = JSON.parse(raw);
+          if (data.type === 'token' && data.content != null) {
+            fullText += data.content;
+          } else if (data.type === 'error' && data.content) {
+            fullText = data.content;
           }
-        } else if (event.type === "error") {
-          console.error("SSE connection error:", event.message);
-          es.close();
-          setIsTyping(false);
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === botMessageId
-                ? { ...msg, text: "I'm sorry, I'm having trouble connecting right now. Please try again." }
-                : msg
-            )
-          );
-        } else if (event.type === "exception") {
-          console.error("SSE exception:", event.message, event.error);
-          es.close();
-          setIsTyping(false);
+        } catch (e) {
+          console.error('Error parsing SSE block:', e);
         }
-      };
+      }
 
-      es.addEventListener("open", listener);
-      es.addEventListener("message", listener);
-      es.addEventListener("error", listener);
+      if (fullText) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === botMessageId ? { ...msg, text: fullText } : msg
+          )
+        );
+      } else {
+        // Fallback: fetch latest from history
+        try {
+          const historyRes = await fetch(
+            `${API_BASE_URL}/api/chatbot/session/${userId}/history/`,
+            {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+            }
+          );
+          if (historyRes.ok) {
+            const historyData = await historyRes.json();
+            const msgs = historyData.messages || [];
+            const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant');
+            if (lastAssistant?.content) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: lastAssistant.content }
+                    : msg
+                )
+              );
+              scrollRef.current?.scrollToEnd({ animated: true });
+              return;
+            }
+          }
+        } catch (historyErr) {
+          console.error('Fallback history fetch failed:', historyErr);
+        }
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === botMessageId
+              ? { ...msg, text: "I'm here to listen. Can you tell me more?" }
+              : msg
+          )
+        );
+      }
 
-      // Clean up on unmount
-      return () => {
-        es.removeAllEventListeners();
-        es.close();
-      };
+      scrollRef.current?.scrollToEnd({ animated: true });
     } catch (error) {
       console.error("Error sending message:", error);
       setMessages((prev) =>
@@ -624,84 +633,95 @@ export default function Chatbot({ navigation }) {
         throw new Error("No authentication token found");
       }
 
-      // Use EventSource for proper SSE streaming
-      const es = new EventSource(`${API_BASE_URL}/api/chatbot/message/`, {
+      // Use fetch for SSE streaming (avoids Accept header issues with DRF)
+      const response = await fetch(`${API_BASE_URL}/api/chatbot/message/`, {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Accept": "text/event-stream",
           Authorization: `Bearer ${token}`,
         },
-        method: "POST",
         body: JSON.stringify({
           message: trimmed,
           user_name: userName,
         }),
-        pollingInterval: 0, // Disable polling, use true streaming
       });
 
-      const listener = (event) => {
-        if (event.type === "open") {
-          console.log("SSE connection opened");
-        } else if (event.type === "message") {
-          try {
-            const data = JSON.parse(event.data);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
 
-            if (data.type === "token") {
-              // Append token to bot message
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === botMessageId
-                    ? { ...msg, text: msg.text + data.content }
-                    : msg
-                )
-              );
-              scrollRef.current?.scrollToEnd({ animated: false });
-            } else if (data.type === "done") {
-              console.log("Streaming complete");
-              es.close();
-              setIsTyping(false);
-            } else if (data.type === "error") {
-              console.error("Stream error:", data.content);
-              es.close();
-              setIsTyping(false);
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === botMessageId
-                    ? { ...msg, text: "I'm sorry, I encountered an error. Please try again." }
-                    : msg
-                )
-              );
-            }
-          } catch (e) {
-            console.error("Error parsing SSE data:", e);
+      // Parse SSE response text
+      const sseText = await response.text();
+      let fullText = '';
+
+      const normalized = sseText.replace(/\r\n/g, '\n').trim();
+      const blocks = normalized.split(/\n\n+/);
+
+      for (const block of blocks) {
+        const line = block.trim();
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const raw = line.slice(6).trim();
+          const data = JSON.parse(raw);
+          if (data.type === 'token' && data.content != null) {
+            fullText += data.content;
+          } else if (data.type === 'error' && data.content) {
+            fullText = data.content;
           }
-        } else if (event.type === "error") {
-          console.error("SSE connection error:", event.message);
-          es.close();
-          setIsTyping(false);
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === botMessageId
-                ? { ...msg, text: "I'm sorry, I'm having trouble connecting right now. Please try again." }
-                : msg
-            )
-          );
-        } else if (event.type === "exception") {
-          console.error("SSE exception:", event.message, event.error);
-          es.close();
-          setIsTyping(false);
+        } catch (e) {
+          console.error('Error parsing SSE block:', e);
         }
-      };
+      }
 
-      es.addEventListener("open", listener);
-      es.addEventListener("message", listener);
-      es.addEventListener("error", listener);
+      if (fullText) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === botMessageId ? { ...msg, text: fullText } : msg
+          )
+        );
+      } else {
+        // Fallback: fetch latest from history
+        try {
+          const historyRes = await fetch(
+            `${API_BASE_URL}/api/chatbot/session/${userId}/history/`,
+            {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+            }
+          );
+          if (historyRes.ok) {
+            const historyData = await historyRes.json();
+            const msgs = historyData.messages || [];
+            const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant');
+            if (lastAssistant?.content) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === botMessageId
+                    ? { ...msg, text: lastAssistant.content }
+                    : msg
+                )
+              );
+              scrollRef.current?.scrollToEnd({ animated: true });
+              return;
+            }
+          }
+        } catch (historyErr) {
+          console.error('Fallback history fetch failed:', historyErr);
+        }
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === botMessageId
+              ? { ...msg, text: "I'm here to listen. Can you tell me more?" }
+              : msg
+          )
+        );
+      }
 
-      // Clean up on unmount
-      return () => {
-        es.removeAllEventListeners();
-        es.close();
-      };
+      scrollRef.current?.scrollToEnd({ animated: true });
     } catch (error) {
       console.error("Error sending message:", error);
       setMessages((prev) =>
