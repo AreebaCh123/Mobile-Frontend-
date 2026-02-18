@@ -26,7 +26,6 @@ export default {
         backgroundColor: '#ffffff',
       },
       edgeToEdgeEnabled: true,
-      usesCleartextTraffic: true,
     },
     web: {
       favicon: './assets/favicon.png',
@@ -59,7 +58,7 @@ export default {
         androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
       },
       eas: {
-        projectId: 'ad806ab7-46b8-41cb-b3ef-0ea353b9f4b5',
+        projectId: '09140dcf-7ba4-4062-b8b8-cc0524e4b5bb',
       },
     },
   },
