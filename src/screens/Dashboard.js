@@ -94,7 +94,7 @@ export default function Dashboard({ navigation }) {
 
       // Load mood data for last 7 days
       try {
-        const moodRes = await fetch(`${API_BASE_URL}/api/journals/mood-logs/`, {
+        const moodRes = await fetch(`${API_BASE_URL}/api/journals/moods/`, {
           method: 'GET',
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -132,7 +132,7 @@ export default function Dashboard({ navigation }) {
           // Extract journal streak
           const journalMilestone = milestoneData.milestones?.journaling || {};
           if (isActive) setJournalStreak(journalMilestone.days || 0);
-          
+
           // Collect milestones (only show if >= 7 days)
           const milestoneList = [];
           if (journalMilestone.days && journalMilestone.days >= 7 && journalMilestone.milestone) {
@@ -170,7 +170,7 @@ export default function Dashboard({ navigation }) {
           const completed = todayTasks.filter(t => t.completed).length;
           const total = todayTasks.length;
           const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
-          
+
           // Count total completed tasks for milestone
           const allTasksRes = await fetch(`${API_BASE_URL}/api/journals/tasks/?filter=all`, {
             method: 'GET',
@@ -183,7 +183,7 @@ export default function Dashboard({ navigation }) {
               setMilestones(prev => [...prev, { type: 'tasks', text: `🏆 You've completed ${allCompleted} tasks!` }]);
             }
           }
-          
+
           if (isActive) setTaskStats({ completed, total, percentage });
         }
       } catch (err) {
@@ -201,13 +201,13 @@ export default function Dashboard({ navigation }) {
           const medications = medsData.medications || [];
           const today = new Date();
           const daysWithMeds = new Set();
-          
+
           // Check last 7 days - count days where medication was taken
           for (let i = 0; i < 7; i++) {
             const date = new Date(today);
             date.setDate(date.getDate() - i);
             const dateStr = date.toISOString().split('T')[0];
-            
+
             medications.forEach(med => {
               const intakes = med.intakes || [];
               const dayIntakes = intakes.filter(intakeItem => intakeItem.date === dateStr);
@@ -217,7 +217,7 @@ export default function Dashboard({ navigation }) {
               }
             });
           }
-          
+
           if (isActive) setMedicationAdherence({
             onTime: 0, // Not used for this calculation
             total: 0, // Not used for this calculation
@@ -239,19 +239,19 @@ export default function Dashboard({ navigation }) {
         if (exercisesRes.ok && isActive) {
           const sessions = exercisesData.sessions || [];
           const completed = sessions.filter(s => s.completed).length;
-          
+
           // Count exercises completed today
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           const todayStr = today.toISOString().split('T')[0];
-          
+
           const todayExercises = sessions.filter(s => {
             if (!s.completed) return false;
             const sessionDate = new Date(s.created_at);
             const sessionDateStr = sessionDate.toISOString().split('T')[0];
             return sessionDateStr === todayStr;
           }).length;
-          
+
           // Count this week
           const weekAgo = new Date();
           weekAgo.setDate(weekAgo.getDate() - 7);
@@ -261,7 +261,7 @@ export default function Dashboard({ navigation }) {
             const sessionDate = new Date(s.created_at);
             return sessionDate >= weekAgo;
           }).length;
-          
+
           if (isActive) setExerciseStats({ completed, thisWeek, today: todayExercises });
         }
       } catch (err) {
@@ -363,7 +363,7 @@ export default function Dashboard({ navigation }) {
         {/* Daily Progress Stats */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: textColor }]}>📈 Daily Progress</Text>
-          
+
           {/* Journaling Streak */}
           <View style={[styles.statCard, { backgroundColor: surfaceColor, borderColor: isDark ? '#2A2A2F' : colors.border }]}>
             <View style={styles.statLeft}>

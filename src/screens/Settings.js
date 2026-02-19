@@ -164,7 +164,7 @@ export default function Settings({ navigation }) {
           );
 
           // Check mood
-          const moodRes = await fetch(`${API_BASE_URL}/api/journals/mood-logs/`, {
+          const moodRes = await fetch(`${API_BASE_URL}/api/journals/moods/`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           const moodData = moodRes.ok ? await moodRes.json() : { mood_logs: [] };

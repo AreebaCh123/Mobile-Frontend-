@@ -191,7 +191,7 @@ export default function Home({ navigation, route }) {
             );
 
             // Check if mood logged today
-            const moodRes = await fetch(`${API_BASE_URL}/api/journals/mood-logs/`, {
+            const moodRes = await fetch(`${API_BASE_URL}/api/journals/moods/`, {
               method: 'GET',
               headers: { Authorization: `Bearer ${token}` },
             });
